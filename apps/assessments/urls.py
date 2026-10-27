@@ -1,0 +1,107 @@
+from django.urls import path
+
+from .api.assessment_views import (
+    AssessmentCloseView,
+    AssessmentDetailView,
+    AssessmentPublishView,
+    AssessmentQuestionDetailView,
+    AssessmentQuestionListCreateView,
+    OfferingAssessmentListCreateView,
+)
+from .api.attempt_views import (
+    AttemptDetailView,
+    MyAssessmentsView,
+    AttemptLiveView,
+    SaveAnswerView,
+    StartAttemptView,
+    SubmitAttemptView,
+)
+from .api.bank_views import (
+    BankQuestionListCreateView,
+    QuestionBankDetailView,
+    QuestionBankListCreateView,
+    QuestionDetailView,
+    QuestionDuplicateView,
+)
+
+urlpatterns = [
+    # Question banks
+    path(
+        "question-banks/", QuestionBankListCreateView.as_view(), name="question-banks"
+    ),
+    path(
+        "question-banks/<uuid:pk>/",
+        QuestionBankDetailView.as_view(),
+        name="question-bank-detail",
+    ),
+    path(
+        "question-banks/<uuid:bank_id>/questions/",
+        BankQuestionListCreateView.as_view(),
+        name="bank-questions",
+    ),
+    path("questions/<uuid:pk>/", QuestionDetailView.as_view(), name="question-detail"),
+    path(
+        "questions/<uuid:pk>/duplicate/",
+        QuestionDuplicateView.as_view(),
+        name="question-duplicate",
+    ),
+    # Assessments
+    path(
+        "course-offerings/<uuid:offering_id>/assessments/",
+        OfferingAssessmentListCreateView.as_view(),
+        name="offering-assessments",
+    ),
+    path(
+        "assessment-attempts/<uuid:pk>/live/",
+        AttemptLiveView.as_view(),
+        name="attempt-live",
+    ),
+    path(
+        "assessments/<uuid:pk>/",
+        AssessmentDetailView.as_view(),
+        name="assessment-detail",
+    ),
+    path(
+        "assessments/<uuid:pk>/publish/",
+        AssessmentPublishView.as_view(),
+        name="assessment-publish",
+    ),
+    path(
+        "assessments/<uuid:pk>/close/",
+        AssessmentCloseView.as_view(),
+        name="assessment-close",
+    ),
+    path(
+        "assessments/<uuid:assessment_id>/questions/",
+        AssessmentQuestionListCreateView.as_view(),
+        name="assessment-questions",
+    ),
+    path(
+        "assessments/<uuid:assessment_id>/questions/<uuid:aq_id>/",
+        AssessmentQuestionDetailView.as_view(),
+        name="assessment-question-detail",
+    ),
+    # Attempts
+    path(
+        "assessments/<uuid:pk>/attempts/start/",
+        StartAttemptView.as_view(),
+        name="start-attempt",
+    ),
+    path(
+        "assessment-attempts/<uuid:pk>/",
+        AttemptDetailView.as_view(),
+        name="attempt-detail",
+    ),
+    path(
+        "assessment-attempts/<uuid:attempt_id>/answers/<uuid:question_id>/",
+        SaveAnswerView.as_view(),
+        name="save-answer",
+    ),
+    path(
+        "assessment-attempts/<uuid:pk>/submit/",
+        SubmitAttemptView.as_view(),
+        name="submit-attempt",
+    ),
+    # Student
+    path("my/assessments/", MyAssessmentsView.as_view(), name="my-assessments"),
+]

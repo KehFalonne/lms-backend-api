@@ -1,0 +1,42 @@
+# Core
+Django==5.0.9
+djangorestframework==3.15.2
+
+# Auth
+djangorestframework-simplejwt==5.3.1
+bcrypt==4.2.0
+
+# API
+drf-spectacular==0.27.2
+django-filter==24.3
+django-cors-headers==4.4.0
+
+# Config / env
+django-environ==0.11.2
+
+# Database
+psycopg[binary]==3.2.2
+
+# Cache / queue / async
+redis==5.0.8
+celery==5.4.0
+django-celery-results==2.5.1
+channels==4.1.0
+channels-redis==4.2.0
+
+# ASGI server
+daphne==4.1.2
+gunicorn==23.0.0
+uvicorn[standard]==0.30.6
+
+# Files / images
+Pillow==10.4.0
+boto3==1.35.15
+django-storages==1.14.4
+
+# Utilities
+python-dateutil==2.9.0.post0
+
+# ── add these two lines under "Utilities" ──
+djangorestframework-camel-case==1.4.2
+django-redis==5.4.0
