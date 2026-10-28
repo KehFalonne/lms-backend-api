@@ -18,6 +18,12 @@ from .api.item_views import (
     PublishGradeItemView,
     PublishOfferingGradesView,
 )
+from .api.appeal_views import (
+    AppealQueueView,
+    AppealResolveView,
+    AppealWithdrawView,
+    GradeAppealListCreateView,
+)
 
 urlpatterns = [
     # Categories
@@ -75,5 +81,19 @@ urlpatterns = [
         "my/course-offerings/<uuid:offering_id>/grades/",
         MyCourseGradesView.as_view(),
         name="my-course-grades",
+    ),
+    path(
+        "grades/<uuid:grade_id>/appeals/",
+        GradeAppealListCreateView.as_view(),
+        name="grade-appeals",
+    ),
+    path("appeals/", AppealQueueView.as_view(), name="appeal-queue"),
+    path(
+        "appeals/<uuid:pk>/resolve/", AppealResolveView.as_view(), name="appeal-resolve"
+    ),
+    path(
+        "appeals/<uuid:pk>/withdraw/",
+        AppealWithdrawView.as_view(),
+        name="appeal-withdraw",
     ),
 ]

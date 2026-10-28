@@ -1,7 +1,7 @@
 from rest_framework import serializers
 
 from apps.accounts.serializers import UserSerializer
-from .models import Grade, GradeCategory, GradeHistory, GradeItem
+from .models import Grade, GradeCategory, GradeHistory, GradeItem, GradeAppeal
 
 
 class GradeCategorySerializer(serializers.ModelSerializer):
@@ -139,3 +139,66 @@ class SetWeightsSerializer(serializers.Serializer):
                     f"Each entry must contain {required}. Missing: {missing}"
                 )
         return value
+
+
+class GradeAppealSerializer(serializers.ModelSerializer):
+    student = UserSerializer(read_only=True)
+    reviewer = UserSerializer(read_only=True)
+    grade_item_name = serializers.CharField(
+        source="grade.grade_item.name", read_only=True
+    )
+    max_score = serializers.DecimalField(
+        source="grade.grade_item.max_score",
+        max_digits=7,
+        decimal_places=2,
+        read_only=True,
+    )
+    course_offering_id = serializers.CharField(
+        source="grade.grade_item.course_offering_id",
+        read_only=True,
+    )
+
+    class Meta:
+        model = GradeAppeal
+        fields = [
+            "id",
+            "grade",
+            "grade_item_name",
+            "max_score",
+            "course_offering_id",
+            "student",
+            "reason",
+            "status",
+            "original_score",
+            "resolved_score",
+            "reviewer",
+            "reviewer_notes",
+            "created_at",
+            "resolved_at",
+        ]
+        read_only_fields = [
+            "id",
+            "student",
+            "status",
+            "original_score",
+            "resolved_score",
+            "reviewer",
+            "reviewer_notes",
+            "created_at",
+            "resolved_at",
+        ]
+
+
+class CreateAppealSerializer(serializers.Serializer):
+    reason = serializers.CharField(min_length=5, max_length=2000)
+
+
+class ResolveAppealSerializer(serializers.Serializer):
+    decision = serializers.ChoiceField(choices=["APPROVED", "DENIED"])
+    reviewer_notes = serializers.CharField(required=False, allow_blank=True, default="")
+    new_score = serializers.DecimalField(
+        max_digits=7,
+        decimal_places=2,
+        required=False,
+        allow_null=True,
+    )

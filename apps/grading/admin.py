@@ -1,6 +1,6 @@
 from django.contrib import admin
 
-from .models import Grade, GradeCategory, GradeHistory, GradeItem
+from .models import Grade, GradeCategory, GradeHistory, GradeItem, GradeAppeal
 
 
 @admin.register(GradeCategory)
@@ -49,3 +49,26 @@ class GradeHistoryAdmin(admin.ModelAdmin):
     search_fields = ("grade__student__university_id",)
     autocomplete_fields = ("grade", "changed_by")
     readonly_fields = ("id", "changed_at")
+
+
+@admin.register(GradeAppeal)
+class GradeAppealAdmin(admin.ModelAdmin):
+    list_display = (
+        "id",
+        "student",
+        "grade",
+        "status",
+        "original_score",
+        "resolved_score",
+        "created_at",
+    )
+    list_filter = ("status",)
+    search_fields = ("student__university_id", "reason", "reviewer_notes")
+    autocomplete_fields = ("grade", "student", "reviewer")
+    readonly_fields = (
+        "id",
+        "created_at",
+        "resolved_at",
+        "original_score",
+        "resolved_score",
+    )

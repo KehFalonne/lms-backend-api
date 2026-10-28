@@ -265,3 +265,86 @@ class GradeHistory(models.Model):
 
     def __str__(self) -> str:
         return f"{self.grade_id}: {self.previous_score} → {self.new_score}"
+
+
+class AppealStatus(models.TextChoices):
+    PENDING = "PENDING", _("Pending")
+    UNDER_REVIEW = "UNDER_REVIEW", _("Under review")
+    APPROVED = "APPROVED", _("Approved")
+    DENIED = "DENIED", _("Denied")
+    WITHDRAWN = "WITHDRAWN", _("Withdrawn")
+
+
+class GradeAppeal(models.Model):
+    """
+    Student-initiated appeal of a published grade (backend doc §4.3).
+
+    Only one PENDING / UNDER_REVIEW appeal is allowed per grade.
+    Approving creates a GradeHistory entry and updates the grade score.
+    """
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+
+    grade = models.ForeignKey(
+        Grade,
+        on_delete=models.CASCADE,
+        related_name="appeals",
+    )
+    student = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="grade_appeals",
+    )
+
+    reason = models.TextField(_("reason"))
+    status = models.CharField(
+        _("status"),
+        max_length=20,
+        choices=AppealStatus.choices,
+        default=AppealStatus.PENDING,
+        db_index=True,
+    )
+
+    original_score = models.DecimalField(
+        max_digits=7,
+        decimal_places=2,
+        null=True,
+        blank=True,
+    )
+    resolved_score = models.DecimalField(
+        max_digits=7,
+        decimal_places=2,
+        null=True,
+        blank=True,
+    )
+
+    reviewer = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="grade_appeals_reviewed",
+    )
+    reviewer_notes = models.TextField(_("reviewer notes"), blank=True)
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    resolved_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        verbose_name = _("grade appeal")
+        verbose_name_plural = _("grade appeals")
+        ordering = ["-created_at"]
+        indexes = [
+            models.Index(fields=["status", "-created_at"]),
+            models.Index(fields=["student", "-created_at"]),
+        ]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["grade", "student"],
+                condition=models.Q(status__in=["PENDING", "UNDER_REVIEW"]),
+                name="uniq_active_appeal_per_grade",
+            ),
+        ]
+
+    def __str__(self) -> str:
+        return f"Appeal {self.id} on {self.grade_id} ({self.status})"

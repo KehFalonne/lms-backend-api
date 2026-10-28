@@ -319,12 +319,27 @@ class AttemptLiveView(APIView):
         AttemptService.expire_if_needed(attempt)
         attempt.refresh_from_db()
 
-        aqs = (
+        aqs_qs = (
             attempt.assessment.assessment_questions.select_related("question")
             .prefetch_related("question__options")
             .order_by("position")
         )
+        # Apply served_questions if this attempt is randomized
+        if attempt.served_questions:
+            from django.db.models import Case, When, IntegerField
 
+            served_ids = attempt.served_questions
+            aqs_qs = (
+                aqs_qs.filter(id__in=served_ids)
+                .annotate(
+                    _served_order=Case(
+                        *[When(id=sid, then=idx) for idx, sid in enumerate(served_ids)],
+                        output_field=IntegerField(),
+                    )
+                )
+                .order_by("_served_order")
+            )
+        aqs = aqs_qs
         questions = []
         for aq in aqs:
             q = aq.question

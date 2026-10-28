@@ -178,6 +178,7 @@ class AssessmentSerializer(serializers.ModelSerializer):
     course_offering_id = serializers.UUIDField(write_only=True, required=True)
     created_by = UserSerializer(read_only=True)
     question_count = serializers.SerializerMethodField()
+    has_access_code = serializers.SerializerMethodField()
 
     class Meta:
         model = Assessment
@@ -204,6 +205,12 @@ class AssessmentSerializer(serializers.ModelSerializer):
             "question_count",
             "created_at",
             "updated_at",
+            "is_code_gated",
+            "ca_opens_at",
+            "ca_last_entry_at",
+            "serve_question_count",
+            "randomize_question_order",
+            "has_access_code",
         ]
         read_only_fields = [
             "id",
@@ -218,6 +225,9 @@ class AssessmentSerializer(serializers.ModelSerializer):
 
     def get_question_count(self, obj) -> int:
         return obj.assessment_questions.count()
+
+    def get_has_access_code(self, obj) -> bool:
+        return bool(obj.access_code_hash)
 
 
 class AssessmentListSerializer(serializers.ModelSerializer):

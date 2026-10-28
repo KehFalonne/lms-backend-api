@@ -28,7 +28,9 @@ def _envelope(status_code, message, errors=None, path=None):
 
 
 def global_exception_handler(exc, context):
+    import traceback
 
+    traceback.print_exc()
     request = context.get("request") if context else None
     path = getattr(request, "path", "") if request else ""
 

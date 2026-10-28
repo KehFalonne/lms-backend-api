@@ -23,6 +23,11 @@ from .api.bank_views import (
     QuestionDetailView,
     QuestionDuplicateView,
 )
+from .api.ca_views import (
+    EnterAssessmentCodeView,
+    GenerateAccessCodeView,
+    SetAccessCodeView,
+)
 
 urlpatterns = [
     # Question banks
@@ -104,4 +109,19 @@ urlpatterns = [
     ),
     # Student
     path("my/assessments/", MyAssessmentsView.as_view(), name="my-assessments"),
+    path(
+        "assessments/<uuid:pk>/enter-with-code/",
+        EnterAssessmentCodeView.as_view(),
+        name="enter-with-code",
+    ),
+    path(
+        "assessments/<uuid:pk>/generate-code/",
+        GenerateAccessCodeView.as_view(),
+        name="generate-code",
+    ),
+    path(
+        "assessments/<uuid:pk>/set-code/",
+        SetAccessCodeView.as_view(),
+        name="set-code",
+    ),
 ]

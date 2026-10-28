@@ -319,6 +319,42 @@ class Assessment(models.Model):
 
     available_from = models.DateTimeField(_("available from"), null=True, blank=True)
     available_until = models.DateTimeField(_("available until"), null=True, blank=True)
+    # ── CA workflow (backend doc §4.3.1) ──────────────────────────
+    is_code_gated = models.BooleanField(
+        _("code-gated"),
+        default=False,
+        help_text=_("Require an access code to enter this assessment."),
+    )
+    access_code_hash = models.CharField(
+        _("access code hash"),
+        max_length=255,
+        blank=True,
+        help_text=_("Hashed access code — never store the raw code."),
+    )
+    ca_opens_at = models.DateTimeField(
+        _("opens at"),
+        null=True,
+        blank=True,
+        help_text=_("Earliest entry time. Students cannot enter before this."),
+    )
+    ca_last_entry_at = models.DateTimeField(
+        _("last entry at"),
+        null=True,
+        blank=True,
+        help_text=_("Latest time a student can enter the attempt window."),
+    )
+    serve_question_count = models.PositiveIntegerField(
+        _("questions to serve"),
+        null=True,
+        blank=True,
+        help_text=_(
+            "If set and less than the total, each student gets a random subset."
+        ),
+    )
+    randomize_question_order = models.BooleanField(
+        _("randomize question order"),
+        default=False,
+    )
     time_limit_minutes = models.PositiveIntegerField(
         _("time limit (min)"), null=True, blank=True
     )
@@ -425,6 +461,47 @@ class AssessmentQuestion(models.Model):
         ]
 
 
+class AssessmentCodeAttempt(models.Model):
+    """
+    Audit log of every code-entry attempt (success or failure).
+    Used for rate limiting and integrity review.
+    """
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+
+    assessment = models.ForeignKey(
+        Assessment,
+        on_delete=models.CASCADE,
+        related_name="code_attempts",
+    )
+    student = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="assessment_code_attempts",
+    )
+
+    success = models.BooleanField()
+    ip_address = models.GenericIPAddressField(null=True, blank=True)
+    user_agent = models.TextField(blank=True)
+
+    created_at = models.DateTimeField(auto_now_add=True, db_index=True)
+
+    class Meta:
+        verbose_name = _("assessment code attempt")
+        verbose_name_plural = _("assessment code attempts")
+        ordering = ["-created_at"]
+        indexes = [
+            models.Index(fields=["assessment", "student", "-created_at"]),
+            models.Index(fields=["success"]),
+        ]
+
+    def __str__(self) -> str:
+        return (
+            f"{self.student_id} → {self.assessment_id} "
+            f"({'ok' if self.success else 'fail'})"
+        )
+
+
 # ──────────────────────────────────────────────────────────────────────
 # Attempt (database doc §18.3)
 # ──────────────────────────────────────────────────────────────────────
@@ -454,7 +531,22 @@ class AssessmentAttempt(models.Model):
     started_at = models.DateTimeField(auto_now_add=True)
     submitted_at = models.DateTimeField(null=True, blank=True)
     expires_at = models.DateTimeField(null=True, blank=True)
-
+    entered_at = models.DateTimeField(
+        _("entered at"),
+        null=True,
+        blank=True,
+        help_text=_("When the student successfully entered the code."),
+    )
+    served_questions = models.JSONField(
+        _("served questions"),
+        default=list,
+        blank=True,
+        help_text=_(
+            "List of AssessmentQuestion IDs served for this attempt. "
+            "Empty means all questions — populated only when randomization "
+            "or pool selection is active."
+        ),
+    )
     total_score = models.DecimalField(
         _("score"),
         max_digits=8,
