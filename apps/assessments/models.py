@@ -355,6 +355,24 @@ class Assessment(models.Model):
         _("randomize question order"),
         default=False,
     )
+    # ── Proctoring (backend doc §4.3.1) ──────────────────────────
+    proctoring_enabled = models.BooleanField(
+        _("proctoring enabled"),
+        default=False,
+        help_text=_(
+            "Monitor tab switches, focus loss, and clipboard events. "
+            "Events are logged for lecturer review — not used for auto-fail "
+            "unless max_violations is set."
+        ),
+    )
+    proctoring_max_violations = models.PositiveSmallIntegerField(
+        _("max proctoring violations"),
+        default=0,
+        help_text=_(
+            "Auto-submit after this many violations. 0 = log only, "
+            "never auto-submit."
+        ),
+    )
     time_limit_minutes = models.PositiveIntegerField(
         _("time limit (min)"), null=True, blank=True
     )
@@ -643,3 +661,55 @@ class StudentAnswer(models.Model):
                 name="uniq_answer_per_question",
             ),
         ]
+
+
+class ProctoringEventType(models.TextChoices):
+    TAB_SWITCH = "TAB_SWITCH", _("Tab switch")
+    WINDOW_BLUR = "WINDOW_BLUR", _("Window blur")
+    FULLSCREEN_EXIT = "FULLSCREEN_EXIT", _("Fullscreen exit")
+    CONTEXT_MENU = "CONTEXT_MENU", _("Context menu")
+    COPY = "COPY", _("Copy")
+    PASTE = "PASTE", _("Paste")
+    OTHER = "OTHER", _("Other")
+
+
+class AssessmentProctoringEvent(models.Model):
+    """
+    A single integrity signal captured during an assessment attempt.
+
+    Per the backend doc, these are *flags for review*, not automatic
+    penalties — the default `max_violations=0` just logs everything for
+    the lecturer.
+    """
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+
+    attempt = models.ForeignKey(
+        AssessmentAttempt,
+        on_delete=models.CASCADE,
+        related_name="proctoring_events",
+    )
+    event_type = models.CharField(
+        _("event type"),
+        max_length=30,
+        choices=ProctoringEventType.choices,
+        db_index=True,
+    )
+    detail = models.JSONField(_("detail"), default=dict, blank=True)
+
+    ip_address = models.GenericIPAddressField(null=True, blank=True)
+    user_agent = models.TextField(blank=True)
+
+    created_at = models.DateTimeField(auto_now_add=True, db_index=True)
+
+    class Meta:
+        verbose_name = _("assessment proctoring event")
+        verbose_name_plural = _("assessment proctoring events")
+        ordering = ["-created_at"]
+        indexes = [
+            models.Index(fields=["attempt", "-created_at"]),
+            models.Index(fields=["event_type"]),
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.attempt_id} → {self.event_type} @ {self.created_at}"

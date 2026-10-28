@@ -65,3 +65,38 @@ class Announcement(models.Model):
         if not self.publish_at:
             self.publish_at = timezone.now()
         self.save(update_fields=["status", "publish_at", "updated_at"])
+
+
+class AnnouncementRead(models.Model):
+    """One row per student who has read an announcement."""
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+
+    announcement = models.ForeignKey(
+        Announcement,
+        on_delete=models.CASCADE,
+        related_name="reads",
+    )
+    student = models.ForeignKey(
+        "accounts.User",
+        on_delete=models.CASCADE,
+        related_name="announcement_reads",
+    )
+    read_at = models.DateTimeField(auto_now_add=True, db_index=True)
+
+    class Meta:
+        verbose_name = _("announcement read")
+        verbose_name_plural = _("announcement reads")
+        ordering = ["-read_at"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["announcement", "student"],
+                name="uniq_announcement_read",
+            ),
+        ]
+        indexes = [
+            models.Index(fields=["announcement", "student"]),
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.student_id} → {self.announcement_id}"

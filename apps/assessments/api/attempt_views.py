@@ -14,6 +14,7 @@ from apps.assessments.serializers import (
     AttemptSerializer,
     SaveAnswerSerializer,
     StudentAnswerSerializer,
+    LogProctoringEventSerializer,
 )
 from apps.assessments.services.attempt_service import AttemptService
 from apps.common.responses import error_response, success_response
@@ -262,6 +263,12 @@ class MyAssessmentsView(APIView):
                     "timeLimitMinutes": a.time_limit_minutes,
                     "maxAttempts": a.max_attempts,
                     "attemptsUsed": used,
+                    "isCodeGated": bool(a.is_code_gated),
+                    "caOpensAt": (a.ca_opens_at.isoformat() if a.ca_opens_at else None),
+                    "caLastEntryAt": (
+                        a.ca_last_entry_at.isoformat() if a.ca_last_entry_at else None
+                    ),
+                    "hasAccessCode": bool(a.access_code_hash),
                     "availableFrom": (
                         a.available_from.isoformat() if a.available_from else None
                     ),
@@ -339,21 +346,35 @@ class AttemptLiveView(APIView):
                 )
                 .order_by("_served_order")
             )
+
+        import hashlib
+
         aqs = aqs_qs
+
+        def _shuffle_key(attempt_id, option_id) -> str:
+            return hashlib.sha256(f"{attempt_id}:{option_id}".encode()).hexdigest()
+
         questions = []
-        for aq in aqs:
+        for idx, aq in enumerate(aqs):
             q = aq.question
+            options_list = list(q.options.all().order_by("position"))
+
+            # Option-level shuffle — deterministic per attempt, per question.
+            # Same student reloading the same attempt sees the same order.
+            if attempt.assessment.shuffle_options and len(options_list) > 1:
+                options_list.sort(key=lambda o: _shuffle_key(attempt.id, o.id))
+
             questions.append(
                 {
-                    "id": str(aq.id),  # assessment-question ID — save against this
+                    "id": str(aq.id),
                     "questionId": str(q.id),
-                    "position": aq.position,
+                    "position": idx + 1,  # served-order position, not original
                     "points": str(aq.points),
                     "questionType": q.question_type,
                     "text": q.text,
                     "options": [
-                        {"id": str(o.id), "text": o.text, "position": o.position}
-                        for o in q.options.all().order_by("position")
+                        {"id": str(o.id), "text": o.text, "position": i + 1}
+                        for i, o in enumerate(options_list)
                     ],
                     "blankCount": q.blank_count,
                     "matchingPairs": [
@@ -388,5 +409,86 @@ class AttemptLiveView(APIView):
                 "totalPoints": str(attempt.assessment.total_points),
                 "questions": questions,
                 "answers": answers,
+                "proctoringEnabled": bool(attempt.assessment.proctoring_enabled),
+                "proctoringMaxViolations": int(
+                    attempt.assessment.proctoring_max_violations or 0
+                ),
             }
         )
+
+
+class AttemptProctoringEventView(APIView):
+    """
+    POST /api/v1/assessment-attempts/{id}/proctoring-events/
+      Body: { "eventType": "TAB_SWITCH", "detail": {...} }
+      Student-only — logs one integrity event for this attempt.
+
+    GET /api/v1/assessment-attempts/{id}/proctoring-events/
+      Lecturers/admins only — returns the full event log for this attempt.
+    """
+
+    serializer_class = LogProctoringEventSerializer
+    permission_classes = [IsAuthenticatedAndActive]
+
+    def get(self, request, pk):
+        from apps.assessments.serializers import (
+            AssessmentProctoringEventSerializer,
+        )
+
+        attempt = get_object_or_404(
+            AssessmentAttempt.objects.select_related(
+                "assessment__course_offering", "student"
+            ),
+            pk=pk,
+        )
+
+        # Staff or grading instructor on this offering
+        is_allowed = request.user.is_staff or request.user.is_superuser
+        if not is_allowed:
+            from apps.courses.permissions import CanManageCourseContent
+
+            if not CanManageCourseContent().has_object_permission(
+                request, self, attempt.assessment.course_offering
+            ):
+                return error_response("Not allowed.", status_code=403)
+
+        qs = attempt.proctoring_events.order_by("-created_at")
+        return success_response(
+            data=AssessmentProctoringEventSerializer(qs, many=True).data
+        )
+
+    def post(self, request, pk):
+        from apps.assessments.models import (
+            AssessmentProctoringEvent,
+            AttemptStatus,
+        )
+
+        attempt = get_object_or_404(AssessmentAttempt, pk=pk)
+
+        if attempt.student_id != request.user.id:
+            return error_response("Not allowed.", status_code=403)
+        if attempt.status != AttemptStatus.IN_PROGRESS:
+            return error_response("Attempt is not in progress.", status_code=400)
+        if not attempt.assessment.proctoring_enabled:
+            return error_response(
+                "Proctoring is not enabled for this assessment.",
+                status_code=400,
+            )
+
+        serializer = LogProctoringEventSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        ip = request.META.get("HTTP_X_FORWARDED_FOR", "").split(",")[
+            0
+        ].strip() or request.META.get("REMOTE_ADDR")
+        ua = (request.META.get("HTTP_USER_AGENT") or "")[:500]
+
+        AssessmentProctoringEvent.objects.create(
+            attempt=attempt,
+            event_type=serializer.validated_data["event_type"],
+            detail=serializer.validated_data.get("detail") or {},
+            ip_address=ip or None,
+            user_agent=ua,
+        )
+
+        return success_response(message="Event logged.")

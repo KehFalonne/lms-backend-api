@@ -169,6 +169,7 @@ class MyCourseGradesView(APIView):
                         ),
                         "letterGrade": g.letter_grade,
                         "feedback": g.feedback,
+                        "gradeId": str(g.id),
                     }
                 )
 

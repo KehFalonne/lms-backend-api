@@ -211,6 +211,8 @@ class AssessmentSerializer(serializers.ModelSerializer):
             "serve_question_count",
             "randomize_question_order",
             "has_access_code",
+            "proctoring_enabled ",
+            "proctoring_max_violations ",
         ]
         read_only_fields = [
             "id",
@@ -248,6 +250,10 @@ class AssessmentListSerializer(serializers.ModelSerializer):
             "available_until",
             "status",
             "created_at",
+            "is_code_gated",
+            "ca_opens_at",
+            "proctoring_enabled ",
+            "proctoring_max_violations ",
         ]
         read_only_fields = fields
 
@@ -274,6 +280,7 @@ class AssessmentDetailStudentSerializer(serializers.ModelSerializer):
             "attempts_used",
             "can_start",
             "passing_score",
+            "is_code_gated",
         ]
         read_only_fields = fields
 
@@ -370,3 +377,36 @@ class SaveAnswerSerializer(serializers.Serializer):
         allow_null=True,
     )
     answer_data = serializers.DictField(required=False)
+
+
+from .models import AssessmentProctoringEvent
+
+
+class AssessmentProctoringEventSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = AssessmentProctoringEvent
+        fields = [
+            "id",
+            "attempt",
+            "event_type",
+            "detail",
+            "ip_address",
+            "user_agent",
+            "created_at",
+        ]
+        read_only_fields = ["id", "attempt", "ip_address", "user_agent", "created_at"]
+
+
+class LogProctoringEventSerializer(serializers.Serializer):
+    event_type = serializers.ChoiceField(
+        choices=[
+            "TAB_SWITCH",
+            "WINDOW_BLUR",
+            "FULLSCREEN_EXIT",
+            "CONTEXT_MENU",
+            "COPY",
+            "PASTE",
+            "OTHER",
+        ]
+    )
+    detail = serializers.DictField(required=False, default=dict)

@@ -10,8 +10,9 @@ from .api.assessment_views import (
 )
 from .api.attempt_views import (
     AttemptDetailView,
-    MyAssessmentsView,
     AttemptLiveView,
+    AttemptProctoringEventView,
+    MyAssessmentsView,
     SaveAnswerView,
     StartAttemptView,
     SubmitAttemptView,
@@ -123,5 +124,10 @@ urlpatterns = [
         "assessments/<uuid:pk>/set-code/",
         SetAccessCodeView.as_view(),
         name="set-code",
+    ),
+    path(
+        "assessment-attempts/<uuid:pk>/proctoring-events/",
+        AttemptProctoringEventView.as_view(),
+        name="attempt-proctoring-events",
     ),
 ]

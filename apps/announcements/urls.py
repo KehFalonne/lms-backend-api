@@ -5,6 +5,8 @@ from .api.announcement_views import (
     AnnouncementDetailView,
     AnnouncementPublishView,
     OfferingAnnouncementListCreateView,
+    AnnouncementReadersView,
+    MarkAnnouncementReadView,
 )
 
 urlpatterns = [
@@ -27,5 +29,15 @@ urlpatterns = [
         "announcements/<uuid:pk>/archive/",
         AnnouncementArchiveView.as_view(),
         name="announcement-archive",
+    ),
+    path(
+        "announcements/<uuid:pk>/mark-read/",
+        MarkAnnouncementReadView.as_view(),
+        name="announcement-mark-read",
+    ),
+    path(
+        "announcements/<uuid:pk>/readers/",
+        AnnouncementReadersView.as_view(),
+        name="announcement-readers",
     ),
 ]

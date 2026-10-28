@@ -8,6 +8,7 @@ from .models import (
     QuestionBank,
     QuestionOption,
     StudentAnswer,
+    AssessmentProctoringEvent,
 )
 
 
@@ -78,3 +79,29 @@ class StudentAnswerAdmin(admin.ModelAdmin):
     list_display = ("attempt", "assessment_question", "score", "is_correct")
     autocomplete_fields = ("attempt", "assessment_question")
     readonly_fields = ("id", "created_at", "updated_at")
+
+
+@admin.register(AssessmentProctoringEvent)
+class AssessmentProctoringEventAdmin(admin.ModelAdmin):
+    list_display = ("attempt", "event_type", "ip_address", "created_at")
+    list_filter = ("event_type",)
+    search_fields = ("attempt__student__university_id",)
+    autocomplete_fields = ("attempt",)
+    readonly_fields = (
+        "id",
+        "attempt",
+        "event_type",
+        "detail",
+        "ip_address",
+        "user_agent",
+        "created_at",
+    )
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False

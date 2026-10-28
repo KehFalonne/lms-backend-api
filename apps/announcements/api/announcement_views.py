@@ -144,3 +144,81 @@ class AnnouncementArchiveView(APIView):
             data=AnnouncementSerializer(a).data,
             message="Announcement archived.",
         )
+
+
+class MarkAnnouncementReadView(APIView):
+    """POST /api/v1/announcements/{id}/mark-read/"""
+
+    serializer_class = None
+    permission_classes = [IsAuthenticatedAndActive]
+
+    def post(self, request, pk):
+        from apps.announcements.models import (
+            Announcement,
+            AnnouncementRead,
+            AnnouncementStatus,
+        )
+
+        a = get_object_or_404(Announcement, pk=pk)
+        if a.status != AnnouncementStatus.PUBLISHED:
+            return success_response(message="Not published.")
+
+        AnnouncementRead.objects.get_or_create(
+            announcement=a,
+            student=request.user,
+        )
+        return success_response(message="Marked as read.")
+
+
+class AnnouncementReadersView(APIView):
+    """
+    GET /api/v1/announcements/{id}/readers/
+
+    Returns:
+      {
+        "readCount": 5,
+        "totalStudents": 20,
+        "readers": [{id, universityId, firstName, lastName}, ...],
+        "notRead": [...]
+      }
+    """
+
+    serializer_class = None
+    permission_classes = [IsAuthenticatedAndActive, CanManageCourseContent]
+
+    def get(self, request, pk):
+        from apps.announcements.models import Announcement, AnnouncementRead
+        from apps.announcements.serializers import AnnouncementReaderSerializer
+        from apps.courses.models import CourseEnrollment, EnrollmentStatus
+
+        a = get_object_or_404(Announcement, pk=pk)
+        self.check_object_permissions(request, a.course_offering)
+
+        enrolled = (
+            CourseEnrollment.objects.filter(
+                course_offering=a.course_offering,
+                status=EnrollmentStatus.ACTIVE,
+            )
+            .select_related("student")
+            .order_by("student__last_name", "student__first_name")
+        )
+        enrolled_students = {e.student_id: e.student for e in enrolled}
+
+        reads = AnnouncementRead.objects.filter(announcement=a).select_related(
+            "student"
+        )
+        read_ids = {r.student_id for r in reads}
+
+        readers = [
+            enrolled_students[sid] for sid in read_ids if sid in enrolled_students
+        ]
+        not_read = [s for sid, s in enrolled_students.items() if sid not in read_ids]
+
+        return success_response(
+            data={
+                "readCount": len(readers),
+                "totalStudents": len(enrolled_students),
+                "readers": AnnouncementReaderSerializer(readers, many=True).data,
+                "notRead": AnnouncementReaderSerializer(not_read, many=True).data,
+            }
+        )
