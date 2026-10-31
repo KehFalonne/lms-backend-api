@@ -10,6 +10,8 @@ class LearningEventType(models.TextChoices):
     MODULE_VIEWED = "MODULE_VIEWED", _("Module viewed")
     CONTENT_VIEWED = "CONTENT_VIEWED", _("Content viewed")
     CONTENT_COMPLETED = "CONTENT_COMPLETED", _("Content completed")
+    PDF_OPENED = "PDF_OPENED", _("PDF opened")
+    PDF_DOWNLOADED = "PDF_DOWNLOADED", _("PDF downloaded")
     ASSIGNMENT_OPENED = "ASSIGNMENT_OPENED", _("Assignment opened")
     ASSIGNMENT_SUBMITTED = "ASSIGNMENT_SUBMITTED", _("Assignment submitted")
     ASSESSMENT_STARTED = "ASSESSMENT_STARTED", _("Assessment started")

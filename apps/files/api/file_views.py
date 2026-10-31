@@ -15,6 +15,7 @@ import io
 import mimetypes
 
 from django.http import FileResponse, HttpResponse
+from django.conf import settings
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.views import APIView
 
@@ -119,6 +120,25 @@ class DownloadUrlView(APIView):
         except Exception as exc:
             message = getattr(exc, "detail", str(exc))
             return error_response(str(message), status_code=400)
+        if request.user.is_authenticated:
+            from apps.analytics.services.event_service import EventService
+            from apps.content.models import ContentItem
+
+            pdf_item = (
+                ContentItem.objects.filter(
+                    file_id=file.id, content_type="PDF", deleted_at__isnull=True
+                )
+                .select_related("course_module__course_offering")
+                .first()
+            )
+            if pdf_item:
+                EventService.record(
+                    student=request.user,
+                    event_type="PDF_DOWNLOADED",
+                    course_offering=pdf_item.course_module.course_offering,
+                    entity_type="content_item",
+                    entity_id=pdf_item.id,
+                )
 
         return success_response(data={"downloadUrl": url, "expiresIn": 600})
 
@@ -194,5 +214,13 @@ class LocalDownloadView(APIView):
             fh,
             content_type=mimetypes.guess_type(key)[0] or "application/octet-stream",
         )
+        # PDFs are embedded by the student viewer in a cross-origin iframe
+        # during local development (frontend and API use different ports).
+        # Force inline display and avoid Django's default frame protection
+        # blocking the browser PDF viewer.
+        response["X-Frame-Options"] = (
+            f"ALLOW-FROM {getattr(settings, 'FRONTEND_URL', 'http://localhost:3000')}"
+        )
+        response["Content-Disposition"] = 'inline; filename="document.pdf"'
         response["Accept-Ranges"] = "bytes"
         return response

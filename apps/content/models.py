@@ -150,3 +150,33 @@ class ContentItem(models.Model):
             raise ValidationError(
                 {"external_url": _("URL is required for LINK and EMBED content.")}
             )
+
+
+class ContentItemVersion(models.Model):
+    """Historical PDF file references retained when a lecturer replaces a PDF."""
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    content_item = models.ForeignKey(
+        ContentItem, on_delete=models.CASCADE, related_name="versions"
+    )
+    file_id = models.UUIDField(null=True, blank=True)
+    external_url = models.URLField(blank=True)
+    file_name = models.CharField(max_length=255, blank=True)
+    file_size_bytes = models.BigIntegerField(null=True, blank=True)
+    version_number = models.PositiveIntegerField()
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        related_name="content_item_versions_created",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-version_number"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["content_item", "version_number"],
+                name="uniq_content_item_version",
+            )
+        ]

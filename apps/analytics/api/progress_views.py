@@ -5,7 +5,7 @@ from rest_framework.views import APIView
 from apps.accounts.permissions import IsAuthenticatedAndActive
 from apps.analytics.services.progress_service import ProgressService
 from apps.common.responses import error_response, success_response
-from apps.analytics.models import ContentProgress
+from apps.analytics.models import ContentProgress, LearningEvent
 from apps.content.models import ContentItem, CourseModule
 from apps.courses.models import (
     CourseEnrollment,
@@ -165,6 +165,14 @@ class LecturerContentProgressView(APIView):
                 content_item_id__in=item_ids,
             )
         }
+        event_map = {
+            (event.student_id, event.entity_id, event.event_type)
+            for event in LearningEvent.objects.filter(
+                student_id__in=[enrollment.student_id for enrollment in enrollments],
+                entity_id__in=item_ids,
+                event_type__in=["PDF_OPENED", "PDF_DOWNLOADED"],
+            )
+        }
         module_titles = {module["id"]: module["title"] for module in modules}
 
         rows = []
@@ -197,6 +205,16 @@ class LecturerContentProgressView(APIView):
                         ),
                         "lastAccessedAt": (
                             progress.last_accessed_at.isoformat() if progress else None
+                        ),
+                        "opened": (
+                            (student.id, item["id"], "PDF_OPENED") in event_map
+                            if item["content_type"] == "PDF"
+                            else False
+                        ),
+                        "downloaded": (
+                            (student.id, item["id"], "PDF_DOWNLOADED") in event_map
+                            if item["content_type"] == "PDF"
+                            else False
                         ),
                     }
                 )

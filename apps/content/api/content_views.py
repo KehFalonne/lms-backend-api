@@ -6,7 +6,8 @@ from rest_framework.views import APIView
 
 from apps.accounts.permissions import IsAuthenticatedAndActive
 from apps.common.responses import success_response
-from apps.content.models import ContentItem, CourseModule
+from apps.content.models import ContentItem, ContentItemVersion, CourseModule
+from apps.files.models import File
 from apps.content.serializers import ContentItemSerializer
 from apps.courses.permissions import CanManageCourseContent
 
@@ -130,6 +131,14 @@ class ContentItemDetailView(APIView):
                 entity_type="content_item",
                 entity_id=item.id,
             )
+            if item.content_type == "PDF":
+                EventService.record(
+                    student=request.user,
+                    event_type="PDF_OPENED",
+                    course_offering=item.course_module.course_offering,
+                    entity_type="content_item",
+                    entity_id=item.id,
+                )
         except Exception:
             pass
         return success_response(data=ContentItemSerializer(item).data)
@@ -137,9 +146,33 @@ class ContentItemDetailView(APIView):
     def patch(self, request, pk):
         item = self._get(pk)
         self.check_object_permissions(request, item.course_module.course_offering)
+        previous_file_id = item.file_id
+        previous_type = item.content_type
         serializer = ContentItemSerializer(item, data=request.data, partial=True)
         serializer.is_valid(raise_exception=True)
         serializer.save()
+        if (
+            previous_type == "PDF"
+            and item.content_type == "PDF"
+            and previous_file_id
+            and previous_file_id != item.file_id
+        ):
+            previous_file = File.objects.filter(id=previous_file_id).first()
+            next_version = (
+                item.versions.order_by("-version_number")
+                .values_list("version_number", flat=True)
+                .first()
+                or 0
+            ) + 1
+            ContentItemVersion.objects.create(
+                content_item=item,
+                file_id=previous_file_id,
+                external_url=item.external_url,
+                file_name=previous_file.original_name if previous_file else "",
+                file_size_bytes=previous_file.size_bytes if previous_file else None,
+                version_number=next_version,
+                created_by=request.user,
+            )
         return success_response(
             data=ContentItemSerializer(item).data,
             message="Content updated successfully.",

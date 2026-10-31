@@ -38,7 +38,7 @@ class Migration(migrations.Migration):
             name='LearningEvent',
             fields=[
                 ('id', models.UUIDField(default=uuid.uuid4, editable=False, primary_key=True, serialize=False)),
-                ('event_type', models.CharField(choices=[('COURSE_VIEWED', 'Course viewed'), ('MODULE_VIEWED', 'Module viewed'), ('CONTENT_VIEWED', 'Content viewed'), ('CONTENT_COMPLETED', 'Content completed'), ('ASSIGNMENT_OPENED', 'Assignment opened'), ('ASSIGNMENT_SUBMITTED', 'Assignment submitted'), ('ASSESSMENT_STARTED', 'Assessment started'), ('ASSESSMENT_SUBMITTED', 'Assessment submitted'), ('DISCUSSION_VIEWED', 'Discussion viewed'), ('LOGIN', 'Login')], db_index=True, max_length=40, verbose_name='event type')),
+                ('event_type', models.CharField(choices=[('COURSE_VIEWED', 'Course viewed'), ('MODULE_VIEWED', 'Module viewed'), ('CONTENT_VIEWED', 'Content viewed'), ('CONTENT_COMPLETED', 'Content completed'), ('PDF_OPENED', 'PDF opened'), ('PDF_DOWNLOADED', 'PDF downloaded'), ('ASSIGNMENT_OPENED', 'Assignment opened'), ('ASSIGNMENT_SUBMITTED', 'Assignment submitted'), ('ASSESSMENT_STARTED', 'Assessment started'), ('ASSESSMENT_SUBMITTED', 'Assessment submitted'), ('DISCUSSION_VIEWED', 'Discussion viewed'), ('LOGIN', 'Login')], db_index=True, max_length=40, verbose_name='event type')),
                 ('entity_type', models.CharField(blank=True, max_length=40, verbose_name='entity type')),
                 ('entity_id', models.UUIDField(blank=True, null=True, verbose_name='entity id')),
                 ('metadata', models.JSONField(blank=True, default=dict, verbose_name='metadata')),
