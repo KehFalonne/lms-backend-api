@@ -177,6 +177,7 @@ class MyContentTreeView(APIView):
                             "contentType": item.content_type,
                             "description": item.description,
                             "body": item.body,
+                            "transcript": item.transcript,
                             "externalUrl": item.external_url,
                             "position": item.position,
                             "isRequired": item.is_required,

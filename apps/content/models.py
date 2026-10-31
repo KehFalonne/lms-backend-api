@@ -94,7 +94,25 @@ class ContentItem(models.Model):
 
     description = models.TextField(_("description"), blank=True)
     body = models.TextField(_("body"), blank=True)
+    transcript = models.TextField(_("audio transcript"), blank=True)
     external_url = models.URLField(_("external URL"), blank=True)
+    allow_download = models.BooleanField(
+        _("allow download"),
+        default=True,
+        help_text=_("Allow students to download attached audio files."),
+    )
+    chapters = models.JSONField(
+        _("audio chapters"),
+        default=list,
+        blank=True,
+        help_text=_("Ordered audio chapters with title and startSeconds."),
+    )
+    attachment_ids = models.JSONField(
+        _("attachment files"),
+        default=list,
+        blank=True,
+        help_text=_("Ready file IDs attached to the lesson."),
+    )
 
     # Placeholder — real File FK arrives in Sprint 6.
     file_id = models.UUIDField(

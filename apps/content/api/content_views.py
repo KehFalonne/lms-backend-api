@@ -5,7 +5,7 @@ from rest_framework import status
 from rest_framework.views import APIView
 
 from apps.accounts.permissions import IsAuthenticatedAndActive
-from apps.common.responses import success_response
+from apps.common.responses import error_response, success_response
 from apps.content.models import ContentItem, ContentItemVersion, CourseModule
 from apps.files.models import File
 from apps.content.serializers import ContentItemSerializer
@@ -148,12 +148,13 @@ class ContentItemDetailView(APIView):
         self.check_object_permissions(request, item.course_module.course_offering)
         previous_file_id = item.file_id
         previous_type = item.content_type
+        previous_external_url = item.external_url
         serializer = ContentItemSerializer(item, data=request.data, partial=True)
         serializer.is_valid(raise_exception=True)
         serializer.save()
         if (
-            previous_type == "PDF"
-            and item.content_type == "PDF"
+            previous_type in ("PDF", "AUDIO")
+            and item.content_type == previous_type
             and previous_file_id
             and previous_file_id != item.file_id
         ):
@@ -167,7 +168,7 @@ class ContentItemDetailView(APIView):
             ContentItemVersion.objects.create(
                 content_item=item,
                 file_id=previous_file_id,
-                external_url=item.external_url,
+                external_url=previous_external_url,
                 file_name=previous_file.original_name if previous_file else "",
                 file_size_bytes=previous_file.size_bytes if previous_file else None,
                 version_number=next_version,

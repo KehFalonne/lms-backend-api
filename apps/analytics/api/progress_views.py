@@ -73,8 +73,7 @@ class ContentProgressView(APIView):
                 )
         if (
             status_value == "COMPLETED"
-            and item.content_type == "VIDEO"
-            and item.is_required
+            and item.content_type in ("VIDEO", "AUDIO")
             and (progress_percent is None or progress_percent < 90)
         ):
             existing_progress = (
@@ -85,7 +84,7 @@ class ContentProgressView(APIView):
             )
             if existing_progress < 90:
                 return error_response(
-                    "Watch at least 90% of this required video before marking it complete.",
+                    "Watch or listen to at least 90% of this required lesson before marking it complete.",
                     status_code=400,
                 )
 
@@ -170,7 +169,7 @@ class LecturerContentProgressView(APIView):
             for event in LearningEvent.objects.filter(
                 student_id__in=[enrollment.student_id for enrollment in enrollments],
                 entity_id__in=item_ids,
-                event_type__in=["PDF_OPENED", "PDF_DOWNLOADED"],
+                event_type__in=["CONTENT_VIEWED", "PDF_OPENED", "PDF_DOWNLOADED"],
             )
         }
         module_titles = {module["id"]: module["title"] for module in modules}
@@ -211,6 +210,7 @@ class LecturerContentProgressView(APIView):
                             if item["content_type"] == "PDF"
                             else False
                         ),
+                        "viewed": (student.id, item["id"], "CONTENT_VIEWED") in event_map,
                         "downloaded": (
                             (student.id, item["id"], "PDF_DOWNLOADED") in event_map
                             if item["content_type"] == "PDF"

@@ -13,6 +13,7 @@ HMAC-signed URLs (dev-only convenience).
 
 import io
 import mimetypes
+import re
 
 from django.http import FileResponse, HttpResponse
 from django.conf import settings
@@ -210,17 +211,55 @@ class LocalDownloadView(APIView):
         except FileNotFoundError:
             return HttpResponse(status=404)
 
-        response = FileResponse(
-            fh,
-            content_type=mimetypes.guess_type(key)[0] or "application/octet-stream",
+        # Use the metadata captured during upload instead of assuming every
+        # local download is a PDF. Browsers use this header to decide whether
+        # an <audio> or <video> element can decode the response.
+        file = File.objects.filter(storage_key=key, status=FileStatus.READY).first()
+        content_type = (
+            file.mime_type
+            if file and file.mime_type
+            else mimetypes.guess_type(key)[0]
+            or "application/octet-stream"
         )
-        # PDFs are embedded by the student viewer in a cross-origin iframe
-        # during local development (frontend and API use different ports).
-        # Force inline display and avoid Django's default frame protection
-        # blocking the browser PDF viewer.
+        if content_type == "audio/x-m4a":
+            content_type = "audio/mp4"
+        fh.seek(0, 2)
+        file_size = fh.tell()
+        fh.seek(0)
+        range_header = request.META.get("HTTP_RANGE", "")
+        range_match = re.match(r"bytes=(\d*)-(\d*)$", range_header)
+
+        if range_match and file_size > 0:
+            start_text, end_text = range_match.groups()
+            start = int(start_text) if start_text else 0
+            end = int(end_text) if end_text else file_size - 1
+            if start >= file_size or start > end:
+                return HttpResponse(status=416, headers={"Content-Range": f"bytes */{file_size}"})
+            end = min(end, file_size - 1)
+            length = end - start + 1
+            fh.seek(start)
+
+            def ranged_content():
+                remaining = length
+                while remaining > 0:
+                    chunk = fh.read(min(64 * 1024, remaining))
+                    if not chunk:
+                        break
+                    remaining -= len(chunk)
+                    yield chunk
+                fh.close()
+
+            response = FileResponse(ranged_content(), status=206, content_type=content_type)
+            response["Content-Range"] = f"bytes {start}-{end}/{file_size}"
+            response["Content-Length"] = str(length)
+        else:
+            response = FileResponse(fh, content_type=content_type)
+            response["Content-Length"] = str(file_size)
+        # Keep browser previews enabled for PDFs, audio, and video.
         response["X-Frame-Options"] = (
             f"ALLOW-FROM {getattr(settings, 'FRONTEND_URL', 'http://localhost:3000')}"
         )
-        response["Content-Disposition"] = 'inline; filename="document.pdf"'
+        filename = file.original_name if file else key.rsplit("/", 1)[-1]
+        response["Content-Disposition"] = f'inline; filename="{filename}"'
         response["Accept-Ranges"] = "bytes"
         return response

@@ -70,7 +70,9 @@ def make_storage_key(filename: str, prefix: str = "uploads") -> str:
 # ──────────────────────────────────────────────────────────────────────
 
 
-def generate_upload_target(filename: str, prefix: str = "uploads") -> PresignedUpload:
+def generate_upload_target(
+    filename: str, prefix: str = "uploads", mime_type: str | None = None
+) -> PresignedUpload:
     """Returns a URL the client can upload to directly."""
     provider = getattr(settings, "STORAGE_PROVIDER", "LOCAL").upper()
     storage_key = make_storage_key(filename, prefix)
@@ -99,6 +101,7 @@ def generate_upload_target(filename: str, prefix: str = "uploads") -> PresignedU
         Params={
             "Bucket": settings.AWS_STORAGE_BUCKET_NAME,
             "Key": storage_key,
+            **({"ContentType": mime_type} if mime_type else {}),
         },
         ExpiresIn=900,
     )
@@ -106,7 +109,7 @@ def generate_upload_target(filename: str, prefix: str = "uploads") -> PresignedU
         "upload_url": url,
         "method": "PUT",
         "storage_key": storage_key,
-        "headers": {},
+        "headers": {"Content-Type": mime_type} if mime_type else {},
     }
 
 

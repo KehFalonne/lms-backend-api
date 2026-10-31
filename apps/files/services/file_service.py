@@ -3,7 +3,6 @@ File lifecycle: request upload → complete → access-checked download → dele
 """
 
 import mimetypes
-import os
 from pathlib import Path
 
 from django.db import transaction
@@ -39,6 +38,7 @@ ALLOWED_EXTENSIONS = {
     "svg",
     # audio/video
     "mp3",
+    "m4a",
     "mp4",
     "wav",
     "webm",
@@ -67,6 +67,10 @@ class FileService:
                 {"file": [f"File exceeds {MAX_FILE_SIZE_MB} MB limit."]}
             )
         mime, _ = mimetypes.guess_type(filename)
+        # Browsers commonly reject audio/x-m4a even though the container is
+        # compatible with the MP4 audio format.
+        if mime == "audio/x-m4a":
+            mime = "audio/mp4"
         return ext, mime or "application/octet-stream"
 
     @staticmethod
@@ -80,7 +84,9 @@ class FileService:
     ) -> dict:
         ext, guessed = FileService.validate(filename, size_bytes)
 
-        target = generate_upload_target(filename, prefix=prefix)
+        target = generate_upload_target(
+            filename, prefix=prefix, mime_type=mime_type or guessed
+        )
         provider = getattr(
             __import__("django.conf", fromlist=["settings"]).settings,
             "STORAGE_PROVIDER",
