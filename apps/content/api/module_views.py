@@ -1,4 +1,6 @@
 from django.shortcuts import get_object_or_404
+from django.utils import timezone
+from django.db.models import Q
 from drf_spectacular.utils import extend_schema, OpenApiParameter
 from drf_spectacular.types import OpenApiTypes
 from rest_framework import status
@@ -11,6 +13,10 @@ from apps.content.models import CourseModule
 from apps.content.serializers import CourseModuleSerializer
 from apps.courses.models import CourseOffering
 from apps.courses.permissions import CanManageCourseContent
+
+
+def _can_manage_content(request, offering):
+    return CanManageCourseContent().has_object_permission(request, None, offering)
 
 
 class OfferingModuleListCreateView(APIView):
@@ -33,8 +39,12 @@ class OfferingModuleListCreateView(APIView):
     def get(self, request, offering_id):
         offering = self._get_offering(offering_id)
         qs = offering.modules.all().order_by("position")
-        if not request.user.is_staff:
-            qs = qs.filter(is_published=True)
+        if not _can_manage_content(request, offering):
+            now = timezone.now()
+            qs = qs.filter(is_published=True).filter(
+                (Q(availability_start__isnull=True) | Q(availability_start__lte=now))
+                & (Q(availability_end__isnull=True) | Q(availability_end__gte=now))
+            )
         return success_response(data=CourseModuleSerializer(qs, many=True).data)
 
     def post(self, request, offering_id):
@@ -133,14 +143,25 @@ class MyContentTreeView(APIView):
         modules = CourseModule.objects.filter(
             course_offering_id=offering_id, is_published=True
         ).order_by("position")
+        now = timezone.now()
+        modules = modules.filter(
+            (Q(availability_start__isnull=True) | Q(availability_start__lte=now))
+            & (Q(availability_end__isnull=True) | Q(availability_end__gte=now))
+        )
 
         content_ids = []
         module_data = []
         for module in modules:
             items = list(
                 module.content_items.filter(
-                    is_published=True, deleted_at__isnull=True
-                ).order_by("position")
+                    is_published=True,
+                    deleted_at__isnull=True,
+                )
+                .filter(
+                    (Q(availability_start__isnull=True) | Q(availability_start__lte=now))
+                    & (Q(availability_end__isnull=True) | Q(availability_end__gte=now))
+                )
+                .order_by("position")
             )
             content_ids.extend(item.id for item in items)
             module_data.append(

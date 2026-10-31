@@ -1,4 +1,6 @@
 from django.shortcuts import get_object_or_404
+from django.utils import timezone
+from django.db.models import Q
 from rest_framework import status
 from rest_framework.views import APIView
 
@@ -7,6 +9,35 @@ from apps.common.responses import success_response
 from apps.content.models import ContentItem, CourseModule
 from apps.content.serializers import ContentItemSerializer
 from apps.courses.permissions import CanManageCourseContent
+
+
+def _can_manage_content(request, offering):
+    return CanManageCourseContent().has_object_permission(request, None, offering)
+
+
+def _student_can_view(request, item):
+    from apps.courses.models import CourseEnrollment, EnrollmentStatus
+
+    now = timezone.now()
+    return (
+        CourseEnrollment.objects.filter(
+            student=request.user,
+            course_offering_id=item.course_module.course_offering_id,
+            status=EnrollmentStatus.ACTIVE,
+        ).exists()
+        and item.course_module.is_published
+        and item.is_published
+        and (
+            item.course_module.availability_start is None
+            or item.course_module.availability_start <= now
+        )
+        and (
+            item.course_module.availability_end is None
+            or item.course_module.availability_end >= now
+        )
+        and (item.availability_start is None or item.availability_start <= now)
+        and (item.availability_end is None or item.availability_end >= now)
+    )
 
 
 class ModuleContentListCreateView(APIView):
@@ -29,8 +60,12 @@ class ModuleContentListCreateView(APIView):
     def get(self, request, module_id):
         module = self._module(module_id)
         qs = module.content_items.filter(deleted_at__isnull=True).order_by("position")
-        if not request.user.is_staff:
-            qs = qs.filter(is_published=True)
+        if not _can_manage_content(request, module.course_offering):
+            now = timezone.now()
+            qs = qs.filter(is_published=True).filter(
+                (Q(availability_start__isnull=True) | Q(availability_start__lte=now))
+                & (Q(availability_end__isnull=True) | Q(availability_end__gte=now))
+            )
         return success_response(data=ContentItemSerializer(qs, many=True).data)
 
     def post(self, request, module_id):
@@ -81,6 +116,9 @@ class ContentItemDetailView(APIView):
 
     def get(self, request, pk):
         item = self._get(pk)
+        if not _can_manage_content(request, item.course_module.course_offering):
+            if not _student_can_view(request, item):
+                return error_response("Content is not available.", status_code=404)
         # Record learning event (fire-and-forget)
         try:
             from apps.analytics.services.event_service import EventService

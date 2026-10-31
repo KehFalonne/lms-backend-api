@@ -10,6 +10,7 @@ from apps.academics.models import AcademicYear, Semester
 from apps.assessments.models import (
     Assessment,
     AssessmentAttempt,
+    AssessmentProctoringEvent,
     AssessmentQuestion,
     AssessmentStatus,
     AttemptStatus,
@@ -288,6 +289,62 @@ class TestAttemptFlow:
         api.force_authenticate(user=student)
         res = api.get(f"/api/v1/assessment-attempts/{attempt.id}/")
         assert res.status_code == 403
+
+    def test_proctoring_review_only_counts_events_without_submitting(
+        self, api, student, lecturer, setup
+    ):
+        a, _, _ = self._make_assessment(setup, lecturer)
+        a.proctoring_enabled = True
+        a.proctoring_max_violations = 1
+        a.proctoring_enforcement = "REVIEW_ONLY"
+        a.save(update_fields=[
+            "proctoring_enabled",
+            "proctoring_max_violations",
+            "proctoring_enforcement",
+        ])
+
+        api.force_authenticate(user=student)
+        attempt_id = api.post(f"/api/v1/assessments/{a.id}/attempts/start/").json()[
+            "data"
+        ]["id"]
+        response = api.post(
+            f"/api/v1/assessment-attempts/{attempt_id}/proctoring-events/",
+            {"eventType": "TAB_SWITCH"},
+            format="json",
+        )
+
+        assert response.status_code == 200
+        assert response.json()["data"]["violationCount"] == 1
+        assert response.json()["data"]["autoSubmitted"] is False
+        assert AssessmentAttempt.objects.get(id=attempt_id).status == AttemptStatus.IN_PROGRESS
+
+    def test_proctoring_auto_submit_is_server_enforced(
+        self, api, student, lecturer, setup
+    ):
+        a, _, _ = self._make_assessment(setup, lecturer)
+        a.proctoring_enabled = True
+        a.proctoring_max_violations = 1
+        a.proctoring_enforcement = "AUTO_SUBMIT"
+        a.save(update_fields=[
+            "proctoring_enabled",
+            "proctoring_max_violations",
+            "proctoring_enforcement",
+        ])
+
+        api.force_authenticate(user=student)
+        attempt_id = api.post(f"/api/v1/assessments/{a.id}/attempts/start/").json()[
+            "data"
+        ]["id"]
+        response = api.post(
+            f"/api/v1/assessment-attempts/{attempt_id}/proctoring-events/",
+            {"eventType": "TAB_SWITCH"},
+            format="json",
+        )
+
+        assert response.status_code == 200
+        assert response.json()["data"]["autoSubmitted"] is True
+        assert AssessmentProctoringEvent.objects.filter(attempt_id=attempt_id).count() == 1
+        assert AssessmentAttempt.objects.get(id=attempt_id).status != AttemptStatus.IN_PROGRESS
 
 
 class TestMyAssessments:

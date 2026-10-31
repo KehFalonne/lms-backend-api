@@ -1,4 +1,5 @@
 from django.shortcuts import get_object_or_404
+from django.db import transaction
 from rest_framework import status
 from rest_framework.views import APIView
 
@@ -413,6 +414,9 @@ class AttemptLiveView(APIView):
                 "proctoringMaxViolations": int(
                     attempt.assessment.proctoring_max_violations or 0
                 ),
+                "proctoringMode": attempt.assessment.proctoring_mode,
+                "proctoringEnforcement": attempt.assessment.proctoring_enforcement,
+                "proctoringViolationCount": attempt.proctoring_events.count(),
             }
         )
 
@@ -457,13 +461,17 @@ class AttemptProctoringEventView(APIView):
             data=AssessmentProctoringEventSerializer(qs, many=True).data
         )
 
+    @transaction.atomic
     def post(self, request, pk):
         from apps.assessments.models import (
             AssessmentProctoringEvent,
             AttemptStatus,
         )
 
-        attempt = get_object_or_404(AssessmentAttempt, pk=pk)
+        attempt = get_object_or_404(
+            AssessmentAttempt.objects.select_for_update().select_related("assessment"),
+            pk=pk,
+        )
 
         if attempt.student_id != request.user.id:
             return error_response("Not allowed.", status_code=403)
@@ -483,12 +491,186 @@ class AttemptProctoringEventView(APIView):
         ].strip() or request.META.get("REMOTE_ADDR")
         ua = (request.META.get("HTTP_USER_AGENT") or "")[:500]
 
-        AssessmentProctoringEvent.objects.create(
+        event = AssessmentProctoringEvent.objects.create(
             attempt=attempt,
             event_type=serializer.validated_data["event_type"],
             detail=serializer.validated_data.get("detail") or {},
             ip_address=ip or None,
             user_agent=ua,
         )
+        invigilator_id = attempt.assessment.ca_invigilator_id
+        if invigilator_id:
+            from apps.notifications.services.notification_service import (
+                NotificationService,
+            )
 
-        return success_response(message="Event logged.")
+            NotificationService.broadcast_user_event(
+                user_id=invigilator_id,
+                event_type="ca.monitoring.updated",
+                payload={
+                    "assessmentId": str(attempt.assessment_id),
+                    "attemptId": str(attempt.id),
+                    "eventType": event.event_type,
+                    "violationCount": AssessmentProctoringEvent.objects.filter(
+                        attempt=attempt
+                    ).count(),
+                },
+            )
+
+        violation_count = AssessmentProctoringEvent.objects.filter(
+            attempt=attempt
+        ).count()
+        threshold = int(attempt.assessment.proctoring_max_violations or 0)
+        threshold_reached = threshold > 0 and violation_count >= threshold
+        auto_submitted = False
+
+        if (
+            threshold_reached
+            and attempt.assessment.proctoring_enforcement == "AUTO_SUBMIT"
+        ):
+            attempt = AttemptService.submit_attempt(
+                attempt=attempt,
+                student=request.user,
+            )
+            auto_submitted = True
+
+        return success_response(
+            data={
+                "eventId": str(event.id),
+                "violationCount": violation_count,
+                "maxViolations": threshold,
+                "thresholdReached": threshold_reached,
+                "autoSubmitted": auto_submitted,
+                "attemptStatus": attempt.status,
+            },
+            message="Event logged.",
+        )
+
+
+class AssessmentAttemptsListView(APIView):
+    """
+    GET /api/v1/assessments/{id}/attempts/
+    Lecturers/admins only — all attempts with proctoring counts.
+    """
+
+    serializer_class = None
+    permission_classes = [IsAuthenticatedAndActive]
+
+    def get(self, request, pk):
+        from django.db.models import Count
+        from apps.assessments.models import Assessment
+
+        assessment = get_object_or_404(
+            Assessment.objects.select_related("course_offering"), pk=pk
+        )
+
+        is_allowed = request.user.is_staff or request.user.is_superuser
+        if not is_allowed:
+            from apps.courses.permissions import CanManageCourseContent
+
+            if not CanManageCourseContent().has_object_permission(
+                request, self, assessment.course_offering
+            ):
+                return error_response("Not allowed.", status_code=403)
+
+        attempts = (
+            AssessmentAttempt.objects.filter(assessment=assessment)
+            .select_related("student")
+            .annotate(proctoring_count=Count("proctoring_events"))
+            .order_by("-started_at")
+        )
+
+        data = [
+            {
+                "id": str(a.id),
+                "attemptNumber": a.attempt_number,
+                "status": a.status,
+                "startedAt": a.started_at.isoformat(),
+                "submittedAt": a.submitted_at.isoformat() if a.submitted_at else None,
+                "totalScore": str(a.total_score),
+                "percentage": str(a.percentage),
+                "student": {
+                    "id": str(a.student.id),
+                    "universityId": a.student.university_id,
+                    "firstName": a.student.first_name,
+                    "lastName": a.student.last_name,
+                },
+                "proctoringEventCount": a.proctoring_count,
+            }
+            for a in attempts
+        ]
+        return success_response(data=data)
+
+
+class AttemptHeartbeatView(APIView):
+    """
+    POST /api/v1/assessment-attempts/{id}/heartbeat/
+
+    Called every 15s by the client. If the backend stops receiving heartbeats
+    while the attempt is still IN_PROGRESS, the lecturer review will see a
+    large gap — evidence the tab was backgrounded or the device went to sleep.
+    """
+
+    serializer_class = None
+    permission_classes = [IsAuthenticatedAndActive]
+
+    @transaction.atomic
+    def post(self, request, pk):
+        from django.utils import timezone
+        from apps.assessments.models import (
+            AssessmentAttempt,
+            AssessmentProctoringEvent,
+            AttemptStatus,
+        )
+
+        attempt = get_object_or_404(
+            AssessmentAttempt.objects.select_for_update().select_related("assessment"),
+            pk=pk,
+        )
+        if attempt.student_id != request.user.id:
+            return error_response("Not allowed.", status_code=403)
+        if attempt.status != AttemptStatus.IN_PROGRESS:
+            return error_response("Attempt is not in progress.", status_code=400)
+
+        now = timezone.now()
+        gap_seconds = (
+            (now - attempt.last_heartbeat_at).total_seconds()
+            if attempt.last_heartbeat_at
+            else 0
+        )
+        gap_event = None
+        auto_submitted = False
+
+        if attempt.assessment.proctoring_enabled and gap_seconds > 45:
+            gap_event = AssessmentProctoringEvent.objects.create(
+                attempt=attempt,
+                event_type="HEARTBEAT_GAP",
+                detail={"gapSeconds": round(gap_seconds)},
+            )
+            violation_count = AssessmentProctoringEvent.objects.filter(
+                attempt=attempt
+            ).count()
+            threshold = int(attempt.assessment.proctoring_max_violations or 0)
+            if (
+                threshold > 0
+                and violation_count >= threshold
+                and attempt.assessment.proctoring_enforcement == "AUTO_SUBMIT"
+            ):
+                attempt = AttemptService.submit_attempt(
+                    attempt=attempt,
+                    student=request.user,
+                )
+                auto_submitted = True
+
+        attempt.last_heartbeat_at = now
+        attempt.save(update_fields=["last_heartbeat_at", "updated_at"])
+
+        return success_response(
+            data={
+                "ok": True,
+                "serverTime": now.isoformat(),
+                "heartbeatGapEventId": str(gap_event.id) if gap_event else None,
+                "autoSubmitted": auto_submitted,
+                "attemptStatus": attempt.status,
+            }
+        )

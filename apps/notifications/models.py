@@ -11,6 +11,7 @@ class NotificationType(models.TextChoices):
     ASSESSMENT = "ASSESSMENT", _("Assessment")
     GRADE = "GRADE", _("Grade")
     DISCUSSION = "DISCUSSION", _("Discussion")
+    CA_INVIGILATOR_MESSAGE = "CA_INVIGILATOR_MESSAGE", _("CA invigilator message")
     SYSTEM = "SYSTEM", _("System")
 
 
@@ -26,7 +27,7 @@ class Notification(models.Model):
     )
     type = models.CharField(
         _("type"),
-        max_length=20,
+        max_length=30,
         choices=NotificationType.choices,
         default=NotificationType.SYSTEM,
         db_index=True,

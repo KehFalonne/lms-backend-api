@@ -9,7 +9,9 @@ from .api.assessment_views import (
     OfferingAssessmentListCreateView,
 )
 from .api.attempt_views import (
+    AssessmentAttemptsListView,
     AttemptDetailView,
+    AttemptHeartbeatView,
     AttemptLiveView,
     AttemptProctoringEventView,
     MyAssessmentsView,
@@ -25,6 +27,9 @@ from .api.bank_views import (
     QuestionDuplicateView,
 )
 from .api.ca_views import (
+    CAInvigilatorListView,
+    CAInvigilatorSessionsView,
+    CAMonitoringView,
     EnterAssessmentCodeView,
     GenerateAccessCodeView,
     SetAccessCodeView,
@@ -126,8 +131,33 @@ urlpatterns = [
         name="set-code",
     ),
     path(
+        "ca-invigilators/",
+        CAInvigilatorListView.as_view(),
+        name="ca-invigilators",
+    ),
+    path(
+        "ca-sessions/",
+        CAInvigilatorSessionsView.as_view(),
+        name="ca-sessions",
+    ),
+    path(
+        "assessments/<uuid:pk>/ca-monitoring/",
+        CAMonitoringView.as_view(),
+        name="ca-monitoring",
+    ),
+    path(
         "assessment-attempts/<uuid:pk>/proctoring-events/",
         AttemptProctoringEventView.as_view(),
         name="attempt-proctoring-events",
+    ),
+    path(
+        "assessments/<uuid:pk>/attempts/",
+        AssessmentAttemptsListView.as_view(),
+        name="assessment-attempts-list",
+    ),
+    path(
+        "assessment-attempts/<uuid:pk>/heartbeat/",
+        AttemptHeartbeatView.as_view(),
+        name="attempt-heartbeat",
     ),
 ]

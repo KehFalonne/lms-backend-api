@@ -68,7 +68,11 @@ class Command(BaseCommand):
             self.stdout.write(self.style.WARNING("Existing seed users deleted."))
 
         for spec in SEED:
-            if User.objects.filter(email=spec["email"]).exists():
+            existing = User.objects.filter(email=spec["email"]).first()
+            if existing:
+                if spec["kind"] == "lecturer" and not existing.is_staff:
+                    existing.is_staff = True
+                    existing.save(update_fields=["is_staff"])
                 self.stdout.write(f"  ↳ {spec['email']} already exists — skipping")
                 continue
 
@@ -87,6 +91,8 @@ class Command(BaseCommand):
                 user.is_superuser = True
                 user.save(update_fields=["is_staff", "is_superuser"])
             elif kind == "lecturer":
+                user.is_staff = True
+                user.save(update_fields=["is_staff"])
                 StaffProfile.objects.create(
                     user=user,
                     staff_number=spec["staff_number"],

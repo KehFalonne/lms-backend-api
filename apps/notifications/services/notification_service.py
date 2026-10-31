@@ -19,6 +19,20 @@ logger = logging.getLogger(__name__)
 class NotificationService:
 
     @staticmethod
+    def broadcast_user_event(*, user_id, event_type: str, payload: dict) -> None:
+        """Broadcast a transient event without creating a notification row."""
+        layer = get_channel_layer()
+        if not layer:
+            return
+        try:
+            async_to_sync(layer.group_send)(
+                f"user_{user_id}",
+                {"type": event_type.replace(".", "_"), "payload": payload},
+            )
+        except Exception:
+            logger.exception("Failed to broadcast user event %s", event_type)
+
+    @staticmethod
     def push(
         *,
         recipient,

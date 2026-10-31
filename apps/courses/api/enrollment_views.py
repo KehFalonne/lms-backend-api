@@ -30,11 +30,24 @@ class OfferingEnrollmentListCreateView(APIView):
 
     def get(self, request, offering_id):
         offering = get_object_or_404(CourseOffering, pk=offering_id)
-        # Students may only see their own
-        if request.user.is_staff or request.user.is_superuser:
-            qs = offering.enrollments.select_related("student").all()
+
+        # Staff, superusers, and instructors of this offering see all enrollments.
+        # Everyone else (students) sees only their own.
+        from apps.courses.models import CourseInstructor
+
+        is_staff_user = request.user.is_staff or request.user.is_superuser
+        is_instructor = CourseInstructor.objects.filter(
+            course_offering=offering,
+            user=request.user,
+        ).exists()
+
+        if is_staff_user or is_instructor:
+            qs = offering.enrollments.select_related("student").order_by(
+                "student__last_name", "student__first_name"
+            )
         else:
             qs = offering.enrollments.filter(student=request.user)
+
         return success_response(data=CourseEnrollmentSerializer(qs, many=True).data)
 
     @transaction.atomic

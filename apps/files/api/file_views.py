@@ -12,6 +12,7 @@ HMAC-signed URLs (dev-only convenience).
 """
 
 import io
+import mimetypes
 
 from django.http import FileResponse, HttpResponse
 from rest_framework.permissions import IsAuthenticated
@@ -189,4 +190,9 @@ class LocalDownloadView(APIView):
         except FileNotFoundError:
             return HttpResponse(status=404)
 
-        return FileResponse(fh)
+        response = FileResponse(
+            fh,
+            content_type=mimetypes.guess_type(key)[0] or "application/octet-stream",
+        )
+        response["Accept-Ranges"] = "bytes"
+        return response

@@ -56,6 +56,7 @@ class AssessmentStatus(models.TextChoices):
 
 class AttemptStatus(models.TextChoices):
     IN_PROGRESS = "IN_PROGRESS", _("In progress")
+    PAUSED = "PAUSED", _("Paused by invigilator")
     SUBMITTED = "SUBMITTED", _("Submitted")
     AUTO_GRADED = "AUTO_GRADED", _("Auto-graded")
     MANUAL_GRADING = "MANUAL_GRADING", _("Pending manual grading")
@@ -369,8 +370,21 @@ class Assessment(models.Model):
         _("max proctoring violations"),
         default=0,
         help_text=_(
-            "Auto-submit after this many violations. 0 = log only, "
-            "never auto-submit."
+            "Apply the configured enforcement policy after this many violations. "
+            "0 = log only, never enforce."
+        ),
+    )
+    proctoring_enforcement = models.CharField(
+        _("proctoring enforcement"),
+        max_length=20,
+        choices=[
+            ("REVIEW_ONLY", _("Review only")),
+            ("AUTO_SUBMIT", _("Automatically submit")),
+        ],
+        default="REVIEW_ONLY",
+        help_text=_(
+            "REVIEW_ONLY records violations for lecturer review. "
+            "AUTO_SUBMIT submits the attempt when the threshold is reached."
         ),
     )
     time_limit_minutes = models.PositiveIntegerField(
@@ -410,6 +424,28 @@ class Assessment(models.Model):
 
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
+    proctoring_mode = models.CharField(
+        _("proctoring mode"),
+        max_length=20,
+        choices=[
+            ("LOGGING", _("Logging only")),
+            ("LOCKDOWN", _("Strict lockdown")),
+        ],
+        default="LOGGING",
+        help_text=_(
+            "LOGGING: log violations, no auto-submit. "
+            "LOCKDOWN: force fullscreen + cursor lock, block on exit."
+        ),
+    )
+    ca_invigilator = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name="ca_sessions_invigilated",
+        limit_choices_to={"is_staff": True, "is_active": True},
+        help_text=_("Active staff member assigned to oversee this CA session."),
+    )
 
     class Meta:
         verbose_name = _("assessment")
@@ -582,6 +618,11 @@ class AssessmentAttempt(models.Model):
 
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
+    last_heartbeat_at = models.DateTimeField(
+        _("last heartbeat at"),
+        null=True,
+        blank=True,
+    )
 
     class Meta:
         verbose_name = _("assessment attempt")
@@ -670,6 +711,7 @@ class ProctoringEventType(models.TextChoices):
     CONTEXT_MENU = "CONTEXT_MENU", _("Context menu")
     COPY = "COPY", _("Copy")
     PASTE = "PASTE", _("Paste")
+    HEARTBEAT_GAP = "HEARTBEAT_GAP", _("Heartbeat gap")
     OTHER = "OTHER", _("Other")
 
 
@@ -713,3 +755,36 @@ class AssessmentProctoringEvent(models.Model):
 
     def __str__(self) -> str:
         return f"{self.attempt_id} → {self.event_type} @ {self.created_at}"
+
+
+class CAInvigilatorAction(models.Model):
+    """Audited action taken by an assigned CA invigilator or administrator."""
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    attempt = models.ForeignKey(
+        AssessmentAttempt,
+        on_delete=models.CASCADE,
+        related_name="invigilator_actions",
+    )
+    actor = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.PROTECT,
+        related_name="ca_invigilator_actions",
+    )
+    action = models.CharField(
+        max_length=30,
+        choices=[
+            ("MESSAGE", "Message student"),
+            ("PAUSE", "Pause attempt"),
+            ("RESUME", "Resume attempt"),
+            ("FORCE_SUBMIT", "Force submit"),
+            ("TERMINATE", "Terminate attempt"),
+            ("RESET_LOCKDOWN", "Reset lockdown"),
+        ],
+    )
+    detail = models.JSONField(default=dict, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True, db_index=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+        indexes = [models.Index(fields=["attempt", "-created_at"])]

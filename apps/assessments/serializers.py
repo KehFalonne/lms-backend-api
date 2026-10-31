@@ -1,4 +1,5 @@
 from rest_framework import serializers
+from django.contrib.auth import get_user_model
 
 from apps.accounts.serializers import UserSerializer
 from apps.files.models import File
@@ -7,11 +8,14 @@ from .models import (
     AssessmentAttempt,
     AssessmentQuestion,
     AttemptStatus,
+    CAInvigilatorAction,
     Question,
     QuestionBank,
     QuestionOption,
     StudentAnswer,
 )
+
+User = get_user_model()
 
 
 # ──────────────────────────────────────────────────────────────────────
@@ -176,8 +180,16 @@ class AssessmentQuestionStudentSerializer(serializers.ModelSerializer):
 
 class AssessmentSerializer(serializers.ModelSerializer):
     course_offering_id = serializers.UUIDField(write_only=True, required=True)
+    invigilator_id = serializers.PrimaryKeyRelatedField(
+        source="ca_invigilator",
+        queryset=User.objects.filter(is_staff=True, is_active=True, status="ACTIVE"),
+        required=False,
+        allow_null=True,
+    )
     created_by = UserSerializer(read_only=True)
     question_count = serializers.SerializerMethodField()
+
+    # Computed — never write raw
     has_access_code = serializers.SerializerMethodField()
 
     class Meta:
@@ -205,24 +217,31 @@ class AssessmentSerializer(serializers.ModelSerializer):
             "question_count",
             "created_at",
             "updated_at",
+            # CA workflow
             "is_code_gated",
+            "has_access_code",
             "ca_opens_at",
             "ca_last_entry_at",
             "serve_question_count",
             "randomize_question_order",
-            "has_access_code",
-            "proctoring_enabled ",
-            "proctoring_max_violations ",
+            # Proctoring
+            "proctoring_enabled",
+            "proctoring_max_violations",
+            "proctoring_mode",
+            "proctoring_enforcement",
+            "invigilator_id",
         ]
         read_only_fields = [
             "id",
-            "total_points",
-            "status",
+            "total_points",  # computed from questions
+            "status",  # changed via publish/close actions
             "published_at",
             "created_by",
             "question_count",
             "created_at",
             "updated_at",
+            "is_code_gated",  # set by set-code / generate-code
+            "has_access_code",  # computed
         ]
 
     def get_question_count(self, obj) -> int:
@@ -252,8 +271,10 @@ class AssessmentListSerializer(serializers.ModelSerializer):
             "created_at",
             "is_code_gated",
             "ca_opens_at",
-            "proctoring_enabled ",
-            "proctoring_max_violations ",
+            "proctoring_enabled",
+            "proctoring_max_violations",
+            "proctoring_enforcement",
+            "proctoring_mode",
         ]
         read_only_fields = fields
 
@@ -360,9 +381,24 @@ class AttemptSerializer(serializers.ModelSerializer):
 
 class AttemptDetailSerializer(AttemptSerializer):
     answers = StudentAnswerSerializer(many=True, read_only=True)
+    ca_invigilator_message = serializers.SerializerMethodField()
 
     class Meta(AttemptSerializer.Meta):
-        fields = AttemptSerializer.Meta.fields + ["answers"]
+        fields = AttemptSerializer.Meta.fields + ["answers", "ca_invigilator_message"]
+
+    def get_ca_invigilator_message(self, obj):
+        action = (
+            CAInvigilatorAction.objects.filter(attempt=obj, action="MESSAGE")
+            .order_by("-created_at")
+            .first()
+        )
+        if not action:
+            return None
+        return {
+            "id": str(action.id),
+            "message": action.detail.get("message", ""),
+            "createdAt": action.created_at.isoformat(),
+        }
 
 
 class SaveAnswerSerializer(serializers.Serializer):
@@ -406,7 +442,22 @@ class LogProctoringEventSerializer(serializers.Serializer):
             "CONTEXT_MENU",
             "COPY",
             "PASTE",
+            "HEARTBEAT_GAP",
             "OTHER",
         ]
     )
     detail = serializers.DictField(required=False, default=dict)
+
+
+class InvigilatorActionSerializer(serializers.Serializer):
+    action = serializers.ChoiceField(
+    choices=[
+        "MESSAGE",
+        "PAUSE",
+        "RESUME",
+        "FORCE_SUBMIT",
+        "TERMINATE",
+        "RESET_LOCKDOWN",
+    ]
+    )
+    message = serializers.CharField(required=False, allow_blank=False, max_length=500)

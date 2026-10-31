@@ -61,3 +61,8 @@ class NotificationConsumer(AsyncJsonWebsocketConsumer):
         await self.send_json(
             {"type": "discussion.post_created", "payload": event["payload"]}
         )
+
+    async def ca_monitoring_updated(self, event):
+        await self.send_json(
+            {"type": "ca.monitoring_updated", "payload": event["payload"]}
+        )
