@@ -11,6 +11,7 @@ class NotificationType(models.TextChoices):
     ASSESSMENT = "ASSESSMENT", _("Assessment")
     GRADE = "GRADE", _("Grade")
     DISCUSSION = "DISCUSSION", _("Discussion")
+    ENROLLMENT = "ENROLLMENT", _("Enrollment")
     CA_INVIGILATOR_MESSAGE = "CA_INVIGILATOR_MESSAGE", _("CA invigilator message")
     SYSTEM = "SYSTEM", _("System")
 

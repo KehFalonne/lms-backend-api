@@ -160,6 +160,42 @@ class TestAssignmentCRUD:
         )
         assert res.status_code == 403
 
+    def test_lecturer_updates(self, api, lecturer, setup):
+        a = Assignment.objects.create(
+            course_offering=setup["offering"],
+            title="Original",
+            due_at=timezone.now() + timedelta(days=7),
+            submission_type=SubmissionType.TEXT_ENTRY,
+            created_by=lecturer,
+        )
+        api.force_authenticate(user=lecturer)
+        res = api.patch(
+            f"/api/v1/assignments/{a.id}/",
+            {"title": "Edited", "maxScore": "30.00", "description": "New questions"},
+            format="json",
+        )
+        assert res.status_code == 200
+        a.refresh_from_db()
+        assert a.title == "Edited"
+        assert str(a.max_score) == "30.00"
+        assert a.description == "New questions"
+
+    def test_student_cannot_update(self, api, student, setup):
+        a = Assignment.objects.create(
+            course_offering=setup["offering"],
+            title="Original",
+            due_at=timezone.now() + timedelta(days=7),
+            submission_type=SubmissionType.TEXT_ENTRY,
+            created_by=setup["lecturer"],
+        )
+        api.force_authenticate(user=student)
+        res = api.patch(
+            f"/api/v1/assignments/{a.id}/",
+            {"title": "Hacked"},
+            format="json",
+        )
+        assert res.status_code == 403
+
 
 class TestSubmission:
     def _submission_url(self, aid):
@@ -263,6 +299,73 @@ class TestSubmission:
         res = api.get(f"/api/v1/assignments/{a.id}/submission/")
         assert res.status_code == 200
         assert res.json()["data"]["textContent"] == "hi"
+
+
+class TestAssignmentList:
+    def _url(self, oid):
+        return f"/api/v1/course-offerings/{oid}/assignments/"
+
+    def _draft(self, offering, lecturer):
+        return Assignment.objects.create(
+            course_offering=offering,
+            title="Hidden draft",
+            due_at=timezone.now() + timedelta(days=7),
+            submission_type=SubmissionType.TEXT_ENTRY,
+            created_by=lecturer,
+        )
+
+    def test_lecturer_sees_drafts(self, api, lecturer, setup):
+        draft = self._draft(setup["offering"], lecturer)
+        Assignment.objects.create(
+            course_offering=setup["offering"],
+            title="Live",
+            due_at=timezone.now() + timedelta(days=7),
+            submission_type=SubmissionType.TEXT_ENTRY,
+            status=AssignmentStatus.PUBLISHED,
+            created_by=lecturer,
+        )
+        api.force_authenticate(user=lecturer)
+        res = api.get(self._url(setup["offering"].id))
+        assert res.status_code == 200
+        statuses = {item["id"]: item["status"] for item in res.json()["data"]}
+        assert statuses[str(draft.id)] == "DRAFT"
+
+    def test_lecturer_gets_full_detail_shape(self, api, lecturer, setup):
+        draft = self._draft(setup["offering"], lecturer)
+        draft.description = "Full question text."
+        draft.save(update_fields=["description"])
+        api.force_authenticate(user=lecturer)
+        res = api.get(self._url(setup["offering"].id))
+        assert res.status_code == 200
+        item = next(i for i in res.json()["data"] if i["id"] == str(draft.id))
+        assert item["description"] == "Full question text."
+        assert "attachments" in item
+        assert "maxAttempts" in item
+
+    def test_student_sees_only_published(self, api, student, setup):
+        draft = self._draft(setup["offering"], setup["lecturer"])
+        live = Assignment.objects.create(
+            course_offering=setup["offering"],
+            title="Live",
+            due_at=timezone.now() + timedelta(days=7),
+            submission_type=SubmissionType.TEXT_ENTRY,
+            status=AssignmentStatus.PUBLISHED,
+            created_by=setup["lecturer"],
+        )
+        api.force_authenticate(user=student)
+        res = api.get(self._url(setup["offering"].id))
+        assert res.status_code == 200
+        ids = {str(item["id"]) for item in res.json()["data"]}
+        assert ids == {str(live.id)}
+        assert str(draft.id) not in ids
+
+    def test_other_student_sees_only_published(self, api, other_student, setup):
+        draft = self._draft(setup["offering"], setup["lecturer"])
+        api.force_authenticate(user=other_student)
+        res = api.get(self._url(setup["offering"].id))
+        assert res.status_code == 200
+        ids = {str(item["id"]) for item in res.json()["data"]}
+        assert str(draft.id) not in ids
 
 
 class TestGrading:

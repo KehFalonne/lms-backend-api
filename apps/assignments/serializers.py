@@ -1,8 +1,9 @@
 from rest_framework import serializers
 from apps.accounts.serializers import UserSerializer
-from apps.files.models import File
+from apps.files.models import File, FileStatus
 from .models import (
     Assignment,
+    AssignmentFile,
     AssignmentSubmission,
     Feedback,
     SubmissionFile,
@@ -13,10 +14,26 @@ from .models import (
 # ──────────────────────────────────────────────────────────────────────
 
 
+class AssignmentFileSerializer(serializers.ModelSerializer):
+    file_id = serializers.UUIDField(read_only=True)
+    original_name = serializers.CharField(source="file.original_name", read_only=True)
+    size_bytes = serializers.IntegerField(source="file.size_bytes", read_only=True)
+    mime_type = serializers.CharField(source="file.mime_type", read_only=True)
+
+    class Meta:
+        model = AssignmentFile
+        fields = ["id", "file_id", "original_name", "size_bytes", "mime_type"]
+        read_only_fields = fields
+
+
 class AssignmentSerializer(serializers.ModelSerializer):
     course_offering_id = serializers.UUIDField(write_only=True, required=False)
     created_by = UserSerializer(read_only=True)
     submission_count = serializers.SerializerMethodField()
+    attachments = AssignmentFileSerializer(source="files", many=True, read_only=True)
+    attachment_file_ids = serializers.ListField(
+        child=serializers.UUIDField(), write_only=True, required=False, default=list
+    )
 
     class Meta:
         model = Assignment
@@ -26,6 +43,8 @@ class AssignmentSerializer(serializers.ModelSerializer):
             "title",
             "description",
             "instructions",
+            "attachments",
+            "attachment_file_ids",
             "max_score",
             "available_from",
             "due_at",
@@ -48,6 +67,7 @@ class AssignmentSerializer(serializers.ModelSerializer):
             "published_at",
             "created_by",
             "submission_count",
+            "attachments",
             "created_at",
             "updated_at",
         ]
@@ -55,6 +75,50 @@ class AssignmentSerializer(serializers.ModelSerializer):
     # ─── this MUST be at the class level, NOT inside Meta ───
     def get_submission_count(self, obj) -> int:
         return obj.submissions.count()
+
+    def validate_attachment_file_ids(self, value):
+        request = self.context.get("request")
+        files = File.objects.filter(
+            id__in=value,
+            uploaded_by=request.user if request else None,
+            status=FileStatus.READY,
+        )
+        found_ids = {f.id for f in files}
+        missing = set(value) - found_ids
+        if missing:
+            raise serializers.ValidationError(
+                f"Unknown or unready file(s): {', '.join(str(i) for i in missing)}"
+            )
+        return list(value)
+
+    def _link_files(self, assignment, file_ids):
+        if not file_ids:
+            return
+        existing = set(
+            AssignmentFile.objects.filter(assignment=assignment).values_list(
+                "file_id", flat=True
+            )
+        )
+        to_create = [
+            AssignmentFile(assignment=assignment, file_id=fid)
+            for fid in file_ids
+            if fid not in existing
+        ]
+        AssignmentFile.objects.bulk_create(to_create)
+
+    def create(self, validated_data):
+        attachment_file_ids = validated_data.pop("attachment_file_ids", [])
+        assignment = Assignment.objects.create(**validated_data)
+        self._link_files(assignment, attachment_file_ids)
+        return assignment
+
+    def update(self, instance, validated_data):
+        attachment_file_ids = validated_data.pop("attachment_file_ids", [])
+        for attr, value in validated_data.items():
+            setattr(instance, attr, value)
+        instance.save()
+        self._link_files(instance, attachment_file_ids)
+        return instance
 
 
 class AssignmentListSerializer(serializers.ModelSerializer):

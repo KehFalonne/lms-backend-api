@@ -6,6 +6,7 @@ from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from rest_framework.views import APIView
 
+from apps.accounts.models import StaffProfile
 from apps.accounts.permissions import IsAuthenticatedAndActive
 from apps.assessments.models import Assessment
 from apps.assessments.models import AssessmentAttempt, AttemptStatus, CAInvigilatorAction
@@ -27,6 +28,22 @@ def _is_administrator(user) -> bool:
         "UNIVERSITY_ADMIN",
         "FACULTY_ADMIN",
         "DEPARTMENT_ADMIN",
+    )
+
+
+def _is_staff_profile_user(user) -> bool:
+    return StaffProfile.objects.filter(user_id=user.id).exists()
+
+
+def _can_issue_code(user, assessment) -> bool:
+    """Admins, staff, or the appointed invigilator may issue CA codes."""
+    return (
+        _is_administrator(user)
+        or getattr(user, "is_staff", False)
+        or (
+            _is_staff_profile_user(user)
+            and assessment.ca_invigilator_id == user.id
+        )
     )
 
 
@@ -67,8 +84,8 @@ class EnterAssessmentCodeView(APIView):
 class GenerateAccessCodeView(APIView):
     """
     POST /api/v1/assessments/{id}/generate-code/
-    Staff/instructor only. Generates a new code and returns the raw value
-    (which the lecturer then shares with students).
+    Admin/staff/invigilator only. Generates a new code and returns the raw
+    value (which the invigilator then shares with students).
     """
 
     serializer_class = None
@@ -77,16 +94,11 @@ class GenerateAccessCodeView(APIView):
     def post(self, request, pk):
         assessment = get_object_or_404(Assessment, pk=pk)
 
-        # Only the appointed invigilator or an administrator may issue the
-        # session code. Course lecturers configure the assignment separately.
-        if (
-            not _is_administrator(request.user)
-            and not (
-                request.user.is_staff
-                and assessment.ca_invigilator_id == request.user.id
-            )
-        ):
-            return error_response("Only the assigned invigilator or an administrator may generate the CA code.", status_code=403)
+        # Only administrators, staff, or the appointed invigilator may issue
+        # the session code. Course lecturers configure the assignment
+        # separately.
+        if not _can_issue_code(request.user, assessment):
+            return error_response("Only an administrator, staff, or the assigned invigilator may generate the CA code.", status_code=403)
 
         raw = AssessmentAccessService.generate_and_set_code(assessment)
         return success_response(
@@ -103,13 +115,7 @@ class SetAccessCodeView(APIView):
     def post(self, request, pk):
         assessment = get_object_or_404(Assessment, pk=pk)
 
-        if not (
-            _is_administrator(request.user)
-            or (
-                request.user.is_staff
-                and assessment.ca_invigilator_id == request.user.id
-            )
-        ):
+        if not _can_issue_code(request.user, assessment):
             return error_response("Not allowed.", status_code=403)
 
         code = (request.data.get("code") or "").strip()
@@ -129,10 +135,10 @@ class CAInvigilatorListView(APIView):
         from django.contrib.auth import get_user_model
 
         User = get_user_model()
-        if not (request.user.is_staff or _is_administrator(request.user)):
+        if not (_is_staff_profile_user(request.user) or _is_administrator(request.user)):
             return error_response("Not allowed.", status_code=403)
         users = User.objects.filter(
-            is_staff=True, is_active=True, status="ACTIVE"
+            staff_profile__isnull=False, is_active=True, status="ACTIVE"
         ).order_by("first_name", "last_name")
         return success_response(
             data=[
@@ -148,15 +154,50 @@ class CAInvigilatorListView(APIView):
         )
 
 
+class AssignCAInvigilatorView(APIView):
+    permission_classes = [IsAuthenticatedAndActive]
+
+    def patch(self, request, pk):
+        if not _is_administrator(request.user):
+            return error_response("Only administrators may assign CA invigilators.", status_code=403)
+
+        assessment = get_object_or_404(Assessment, pk=pk)
+        invigilator_id = request.data.get("invigilatorId", request.data.get("invigilator_id"))
+        if invigilator_id:
+            invigilator = get_object_or_404(
+                StaffProfile.objects.select_related("user"),
+                user_id=invigilator_id,
+                user__is_active=True,
+                user__status="ACTIVE",
+            ).user
+        else:
+            invigilator = None
+
+        assessment.ca_invigilator = invigilator
+        assessment.save(update_fields=["ca_invigilator", "updated_at"])
+        return success_response(
+            data={
+                "assessmentId": str(assessment.id),
+                "invigilator": (
+                    {"id": str(invigilator.id), "name": invigilator.get_full_name()}
+                    if invigilator
+                    else None
+                ),
+            },
+            message="CA invigilator assignment updated.",
+        )
+
+
 class CAInvigilatorSessionsView(APIView):
     permission_classes = [IsAuthenticatedAndActive]
 
     def get(self, request):
-        if not _is_administrator(request.user):
+        if not (_is_administrator(request.user) or _is_staff_profile_user(request.user)):
             return error_response("Not allowed.", status_code=403)
-        assessments = Assessment.objects.filter(
-            proctoring_enabled=True
-        ).select_related(
+        assessments = Assessment.objects.filter(proctoring_enabled=True)
+        if not _is_administrator(request.user):
+            assessments = assessments.filter(ca_invigilator=request.user)
+        assessments = assessments.select_related(
             "ca_invigilator",
             "course_offering__course",
         ).order_by("-created_at")
@@ -193,7 +234,8 @@ class CAMonitoringView(APIView):
 
     def _allowed(self, request, assessment):
         return _is_administrator(request.user) or (
-            request.user.is_staff and assessment.ca_invigilator_id == request.user.id
+            _is_staff_profile_user(request.user)
+            and assessment.ca_invigilator_id == request.user.id
         )
 
     def get(self, request, pk):

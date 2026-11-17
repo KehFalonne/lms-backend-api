@@ -8,6 +8,7 @@ from apps.accounts.permissions import IsAuthenticatedAndActive
 from apps.common.responses import success_response
 from apps.academics.models import AcademicYear, Semester, SemesterStatus
 from apps.academics.serializers import SemesterSerializer
+from apps.audit.services.audit_service import AuditService
 
 
 class SemesterViewSet(viewsets.ModelViewSet):
@@ -89,7 +90,8 @@ class SemesterViewSet(viewsets.ModelViewSet):
         )
 
     def destroy(self, request, *args, **kwargs):
-        self.get_object().delete()
+        instance = self.get_object()
+        instance.delete()
         return success_response(message="Semester deleted successfully.")
 
     @action(detail=True, methods=["post"], url_path="set-current")
@@ -97,13 +99,27 @@ class SemesterViewSet(viewsets.ModelViewSet):
     def set_current(self, request, pk=None):
         """POST /semesters/{id}/set-current/"""
         semester = self.get_object()
+        previous_current = list(
+            Semester.objects.filter(
+                academic_year=semester.academic_year, is_current=True
+            ).values_list("name", flat=True)
+        )
         Semester.objects.filter(
             academic_year=semester.academic_year, is_current=True
         ).update(is_current=False, status=SemesterStatus.COMPLETED)
 
         semester.is_current = True
         semester.status = SemesterStatus.ACTIVE
+        semester._skip_audit_log = True
         semester.save(update_fields=["is_current", "status", "updated_at"])
+        AuditService.record(
+            action="SEMESTER_SET_CURRENT",
+            actor=request.user,
+            entity_type="Semester",
+            entity_id=semester.id,
+            request=request,
+            metadata={"previous_current": previous_current},
+        )
         return success_response(
             data=self.get_serializer(semester).data,
             message=f"{semester.name} is now the current semester.",

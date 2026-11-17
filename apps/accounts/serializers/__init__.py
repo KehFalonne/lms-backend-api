@@ -18,6 +18,7 @@ from .rbac import (
 
 from .profile import StaffProfileSerializer, StudentProfileSerializer
 from .user import (
+    AdminPasswordResetSerializer,
     UserCreateSerializer,
     UserMeSerializer,
     UserSerializer,
@@ -37,6 +38,7 @@ __all__ = [
     "UserMeSerializer",
     "UserCreateSerializer",
     "UserUpdateSerializer",
+    "AdminPasswordResetSerializer",
     # profile
     "StudentProfileSerializer",
     "StaffProfileSerializer",

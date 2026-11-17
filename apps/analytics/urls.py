@@ -9,6 +9,7 @@ from .api.dashboard_views import (
 from .api.report_views import ReportsOverviewView
 from .api.event_views import RecordEventView
 from .api.progress_views import ContentProgressView, LecturerContentProgressView
+from .api.analytics_views import CourseAnalyticsView, LecturerAnalyticsView
 
 urlpatterns = [
     path("learning-events/", RecordEventView.as_view(), name="learning-events"),
@@ -21,6 +22,16 @@ urlpatterns = [
         "course-offerings/<uuid:offering_id>/content-progress/",
         LecturerContentProgressView.as_view(),
         name="lecturer-content-progress",
+    ),
+    path(
+        "course-offerings/<uuid:offering_id>/analytics/",
+        CourseAnalyticsView.as_view(),
+        name="course-analytics",
+    ),
+    path(
+        "lecturer/analytics/",
+        LecturerAnalyticsView.as_view(),
+        name="lecturer-analytics",
     ),
     # Dashboards (role-based)
     path(

@@ -1,5 +1,6 @@
 import pytest
 from django.contrib.auth import get_user_model
+
 from django.urls import reverse
 from rest_framework.test import APIClient
 
@@ -128,6 +129,48 @@ class TestLogin:
         )
         assert "universityId" in res.json()["data"]["user"]
         assert "university_id" not in res.json()["data"]["user"]
+
+
+    def test_second_student_login_revokes_first_device(self, api, student):
+        first_login = api.post(
+            self.url,
+            {"identifier": "GU2026001", "password": "Student1234!"},
+            format="json",
+        ).json()["data"]
+        first_access, first_refresh = first_login["access"], first_login["refresh"]
+
+        second_login = api.post(
+            self.url,
+            {"identifier": "GU2026001", "password": "Student1234!"},
+            format="json",
+        ).json()["data"]
+
+        api.credentials(HTTP_AUTHORIZATION=f"Bearer {first_access}")
+        response = api.get("/api/v1/auth/me/")
+        assert response.status_code == 401
+
+        api.credentials()
+        response = api.post(
+            "/api/v1/auth/token/refresh/", {"refresh": first_refresh}, format="json"
+        )
+        assert response.status_code == 401
+
+        api.credentials(HTTP_AUTHORIZATION=f"Bearer {second_login['access']}")
+        assert api.get("/api/v1/auth/me/").status_code == 200
+
+    def test_student_refresh_keeps_session_active(self, api, student):
+        login = api.post(
+            self.url,
+            {"identifier": "GU2026001", "password": "Student1234!"},
+            format="json",
+        ).json()["data"]
+        response = api.post(
+            "/api/v1/auth/token/refresh/", {"refresh": login["refresh"]}, format="json"
+        )
+
+        assert response.status_code == 200
+        api.credentials(HTTP_AUTHORIZATION=f"Bearer {response.json()['data']['access']}")
+        assert api.get("/api/v1/auth/me/").status_code == 200
 
 
 class TestMe:

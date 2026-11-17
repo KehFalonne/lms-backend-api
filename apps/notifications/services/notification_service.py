@@ -7,6 +7,7 @@ Called from any app via `NotificationService.push(...)`.
 from asgiref.sync import async_to_sync
 from channels.layers import get_channel_layer
 from django.contrib.auth import get_user_model
+from django.db.models import Q
 from django.utils import timezone
 import logging
 
@@ -80,6 +81,78 @@ class NotificationService:
         for n in created:
             NotificationService._broadcast(n)
         return created
+
+    @staticmethod
+    def notify_course_instructors(
+        *,
+        course_offering_id,
+        type: str,
+        title: str,
+        message: str,
+        entity_type: str = "",
+        entity_id=None,
+        data: dict | None = None,
+    ):
+        """
+        Notify every instructor linked to a course offering.
+        Returns count of notifications created.
+        """
+        from apps.courses.models import CourseInstructor
+
+        instructor_ids = CourseInstructor.objects.filter(
+            course_offering_id=course_offering_id,
+        ).values_list("user_id", flat=True)
+
+        if not instructor_ids:
+            return 0
+
+        recipients = list(User.objects.filter(id__in=instructor_ids, is_active=True))
+        if not recipients:
+            return 0
+
+        NotificationService.push_bulk(
+            recipients=recipients,
+            type=type,
+            title=title,
+            message=message,
+            entity_type=entity_type,
+            entity_id=entity_id,
+            data=data or {},
+        )
+        return len(recipients)
+
+    @staticmethod
+    def notify_admins(
+        *,
+        type: str,
+        title: str,
+        message: str,
+        entity_type: str = "",
+        entity_id=None,
+        data: dict | None = None,
+    ):
+        """
+        Notify every active staff member (admins).
+        Returns count of notifications created.
+        """
+        recipients = list(
+            User.objects.filter(is_active=True)
+            .filter(Q(is_staff=True) | Q(is_superuser=True))
+            .distinct()
+        )
+        if not recipients:
+            return 0
+
+        NotificationService.push_bulk(
+            recipients=recipients,
+            type=type,
+            title=title,
+            message=message,
+            entity_type=entity_type,
+            entity_id=entity_id,
+            data=data or {},
+        )
+        return len(recipients)
 
     @staticmethod
     def mark_read(notification: Notification) -> None:

@@ -1,5 +1,5 @@
 """
-Course-scope permission classes (per backend doc §11 and §19).
+Course-scope permission classes (per backend doc Â§11 and Â§19).
 
 Checks `CourseInstructor` assignments first (real teaching roles), falling
 back to GLOBAL UserRole scope for admins.
@@ -24,7 +24,7 @@ def _offering_id_from(obj):
 class CanManageCourseContent(BasePermission):
     """
     Object-level: user must be an instructor for this offering with
-    `can_manage_content=True`, OR a superuser, OR have GLOBAL scope.
+    `can_manage_content=True`, OR a superuser/staff member, OR have GLOBAL scope.
     """
 
     message = "You are not an instructor for this course."
@@ -34,14 +34,14 @@ class CanManageCourseContent(BasePermission):
 
     def has_object_permission(self, request, view, obj):
         user = request.user
-        if user.is_superuser:
+        if user.is_superuser or getattr(user, "is_staff", False):
             return True
 
         offering_id = _offering_id_from(obj)
         if not offering_id:
             return False
 
-        # Global role → allowed
+        # Global role â†’ allowed
         if user.user_roles.filter(scope_type="GLOBAL").exists():
             return True
 
@@ -54,7 +54,7 @@ class CanManageCourseContent(BasePermission):
 
 
 class IsCourseInstructor(BasePermission):
-    """Object-level: user is any instructor (any role) for the offering."""
+    """Object-level: user is any instructor (any role) for the offering, or an admin."""
 
     message = "You are not an instructor for this course."
 
@@ -63,7 +63,11 @@ class IsCourseInstructor(BasePermission):
 
     def has_object_permission(self, request, view, obj):
         user = request.user
-        if user.is_superuser:
+        if (
+            user.is_superuser
+            or getattr(user, "is_staff", False)
+            or user.user_roles.filter(scope_type="GLOBAL").exists()
+        ):
             return True
         offering_id = _offering_id_from(obj)
         if not offering_id:
@@ -74,7 +78,7 @@ class IsCourseInstructor(BasePermission):
 
 
 class CanGradeCourse(BasePermission):
-    """Object-level: instructor with `can_grade=True`."""
+    """Object-level: instructor with `can_grade=True`, or an admin."""
 
     message = "You cannot grade this course."
 
@@ -83,7 +87,11 @@ class CanGradeCourse(BasePermission):
 
     def has_object_permission(self, request, view, obj):
         user = request.user
-        if user.is_superuser:
+        if (
+            user.is_superuser
+            or getattr(user, "is_staff", False)
+            or user.user_roles.filter(scope_type="GLOBAL").exists()
+        ):
             return True
         offering_id = _offering_id_from(obj)
         if not offering_id:

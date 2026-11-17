@@ -163,6 +163,12 @@ class CourseOffering(models.Model):
         on_delete=models.PROTECT,
         related_name="course_offerings",
     )
+    eligible_programmes = models.ManyToManyField(
+        "university.Programme",
+        blank=True,
+        related_name="eligible_course_offerings",
+        help_text=_("Additional programmes approved for this offering."),
+    )
 
     section = models.CharField(_("section"), max_length=10, default="A")
     capacity = models.PositiveIntegerField(_("capacity"), default=100)
@@ -276,6 +282,25 @@ class CourseInstructor(models.Model):
         indexes = [
             models.Index(fields=["course_offering", "user"]),
         ]
+
+    def _is_student_user(self) -> bool:
+        from apps.accounts.models import StudentProfile
+
+        return bool(
+            self.user_id
+            and StudentProfile.objects.filter(user_id=self.user_id).exists()
+        )
+
+    def clean(self):
+        super().clean()
+        if self._is_student_user():
+            raise ValidationError(
+                {"user": "Students cannot be assigned teaching roles."}
+            )
+
+    def save(self, *args, **kwargs):
+        self.clean()
+        super().save(*args, **kwargs)
 
     def __str__(self) -> str:
         return f"{self.user.university_id} → {self.course_offering_id} ({self.teaching_role})"

@@ -12,11 +12,13 @@ from apps.files.storage import (
     generate_download_url,
     generate_upload_target,
     local_file_exists,
+    remote_file_exists,
 )
 from apps.common.exceptions.handlers import global_exception_handler  # noqa: F401
 from rest_framework.exceptions import ValidationError
 
 MAX_FILE_SIZE_MB = 50
+UPLOAD_FOLDERS = {"uploads", "profiles", "materials", "submissions"}
 ALLOWED_EXTENSIONS = {
     # documents
     "pdf",
@@ -83,6 +85,8 @@ class FileService:
         prefix: str = "uploads",
     ) -> dict:
         ext, guessed = FileService.validate(filename, size_bytes)
+        if prefix not in UPLOAD_FOLDERS:
+            raise ValidationError({"prefix": ["Unknown upload folder."]})
 
         target = generate_upload_target(
             filename, prefix=prefix, mime_type=mime_type or guessed
@@ -124,10 +128,12 @@ class FileService:
         if file.status != FileStatus.PENDING:
             raise ValidationError({"file": ["File is not awaiting upload."]})
 
-        # For LOCAL, verify the file actually landed.
+        # Verify the binary actually landed before marking READY.
         if file.storage_provider == StorageProvider.LOCAL:
             if not local_file_exists(file.storage_key):
                 raise ValidationError({"file": ["Upload not found. Please retry."]})
+        elif not remote_file_exists(file.storage_key):
+            raise ValidationError({"file": ["Upload not found. Please retry."]})
 
         file.status = FileStatus.READY
         file.save(update_fields=["status", "updated_at"])

@@ -11,7 +11,7 @@ from django.contrib.auth import get_user_model
 from django.db import transaction
 
 from apps.accounts.models import UserStatus
-from apps.accounts.serializers import user
+
 
 User = get_user_model()
 
@@ -36,4 +36,5 @@ class UserService:
         user.sessions.filter(revoked_at__isnull=True).update(
             revoked_at=datetime.now(dt_timezone.utc)
         )
+
         return user

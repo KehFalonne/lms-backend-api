@@ -231,9 +231,27 @@ class LocalDownloadView(APIView):
 
         if range_match and file_size > 0:
             start_text, end_text = range_match.groups()
-            start = int(start_text) if start_text else 0
-            end = int(end_text) if end_text else file_size - 1
+            if not start_text and not end_text:
+                fh.close()
+                return HttpResponse(
+                    status=416,
+                    headers={"Content-Range": f"bytes */{file_size}"},
+                )
+            if start_text:
+                start = int(start_text)
+                end = int(end_text) if end_text else file_size - 1
+            else:
+                suffix_length = int(end_text)
+                if suffix_length <= 0:
+                    fh.close()
+                    return HttpResponse(
+                        status=416,
+                        headers={"Content-Range": f"bytes */{file_size}"},
+                    )
+                start = max(file_size - suffix_length, 0)
+                end = file_size - 1
             if start >= file_size or start > end:
+                fh.close()
                 return HttpResponse(status=416, headers={"Content-Range": f"bytes */{file_size}"})
             end = min(end, file_size - 1)
             length = end - start + 1

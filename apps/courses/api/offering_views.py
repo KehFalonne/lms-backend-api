@@ -1,4 +1,5 @@
 from django.db.models import Count
+from django.db.models import Q
 from django.db import models
 from django.utils import timezone
 from django_filters.rest_framework import DjangoFilterBackend
@@ -36,8 +37,8 @@ class CourseOfferingViewSet(viewsets.GenericViewSet):
     ordering = ["-created_at"]
 
     def get_queryset(self):
-        return CourseOffering.objects.select_related(
-            "course", "semester", "programme"
+        queryset = CourseOffering.objects.select_related(
+            "course", "semester", "programme", "programme__department"
         ).annotate(
             enrolled_count=Count(
                 "enrollments",
@@ -46,6 +47,22 @@ class CourseOfferingViewSet(viewsets.GenericViewSet):
             ),
             instructor_count=Count("instructors", distinct=True),
         )
+        student_profile = getattr(self.request.user, "student_profile", None)
+        if student_profile is not None and not (
+            self.request.user.is_staff or self.request.user.is_superuser
+        ):
+            if (
+                student_profile.programme_id is None
+                or student_profile.current_level is None
+            ):
+                return queryset.none()
+            return queryset.filter(
+                Q(programme_id=student_profile.programme_id)
+                | Q(eligible_programmes=student_profile.programme_id),
+                course__level=student_profile.current_level,
+                semester__is_current=True,
+            ).distinct()
+        return queryset
 
     def get_permissions(self):
         if self.action in (
@@ -63,6 +80,7 @@ class CourseOfferingViewSet(viewsets.GenericViewSet):
 
     def list(self, request, *args, **kwargs):
         qs = self.filter_queryset(self.get_queryset())
+
         page = self.paginate_queryset(qs)
         serializer_cls = (
             CourseOfferingListSerializer
@@ -84,6 +102,9 @@ class CourseOfferingViewSet(viewsets.GenericViewSet):
         course_id = serializer.validated_data.pop("course_id")
         semester_id = serializer.validated_data.pop("semester_id")
         programme_id = serializer.validated_data.pop("programme_id")
+        eligible_programme_ids = serializer.validated_data.pop(
+            "eligible_programme_ids", []
+        )
 
         try:
             course = Course.objects.get(pk=course_id, deleted_at__isnull=True)
@@ -104,6 +125,7 @@ class CourseOfferingViewSet(viewsets.GenericViewSet):
             programme=programme,
             **serializer.validated_data,
         )
+        offering.eligible_programmes.set(eligible_programme_ids)
         fresh = self.get_queryset().get(pk=offering.pk)
         return success_response(
             data=CourseOfferingSerializer(fresh).data,
@@ -116,14 +138,25 @@ class CourseOfferingViewSet(viewsets.GenericViewSet):
         serializer = CourseOfferingSerializer(instance, data=request.data, partial=True)
         serializer.is_valid(raise_exception=True)
 
-        # course_id/semester_id/programme_id are required=False on update — ignore if not sent
-        serializer.validated_data.pop("course_id", None)
-        serializer.validated_data.pop("semester_id", None)
-        serializer.validated_data.pop("programme_id", None)
+        course_id = serializer.validated_data.pop("course_id", None)
+        semester_id = serializer.validated_data.pop("semester_id", None)
+        programme_id = serializer.validated_data.pop("programme_id", None)
+        eligible_programme_ids = serializer.validated_data.pop(
+            "eligible_programme_ids", None
+        )
+
+        if course_id is not None:
+            instance.course_id = course_id
+        if semester_id is not None:
+            instance.semester_id = semester_id
+        if programme_id is not None:
+            instance.programme_id = programme_id
 
         for k, v in serializer.validated_data.items():
             setattr(instance, k, v)
         instance.save()
+        if eligible_programme_ids is not None:
+            instance.eligible_programmes.set(eligible_programme_ids)
         fresh = self.get_queryset().get(pk=instance.pk)
         return success_response(
             data=CourseOfferingSerializer(fresh).data,

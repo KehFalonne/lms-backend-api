@@ -2,6 +2,9 @@ from django.contrib.auth import get_user_model
 from django.contrib.auth.password_validation import validate_password
 from rest_framework import serializers
 
+from apps.files.models import FileStatus
+from apps.files.services.file_service import FileService
+
 User = get_user_model()
 
 
@@ -21,6 +24,7 @@ class LoginUserSerializer(serializers.ModelSerializer):
     """Minimal user object embedded in the login response."""
 
     roles = serializers.SerializerMethodField()
+    avatar = serializers.SerializerMethodField()
 
     class Meta:
         model = User
@@ -37,6 +41,13 @@ class LoginUserSerializer(serializers.ModelSerializer):
 
     def get_roles(self, obj) -> list[str]:
         return obj.get_role_codes()
+
+    def get_avatar(self, obj) -> str:
+        if obj.avatar_file_id and obj.avatar_file.status == FileStatus.READY:
+            url = FileService.get_download_url(obj.avatar_file, expires_in=3600)
+            request = self.context.get("request")
+            return request.build_absolute_uri(url) if request and url.startswith("/") else url
+        return obj.avatar or ""
 
 
 class TokenPairSerializer(serializers.Serializer):

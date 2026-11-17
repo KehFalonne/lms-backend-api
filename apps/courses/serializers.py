@@ -75,6 +75,10 @@ class CourseOfferingSerializer(serializers.ModelSerializer):
     course_id = serializers.UUIDField(write_only=True, required=True)
     semester_id = serializers.UUIDField(write_only=True, required=True)
     programme_id = serializers.UUIDField(write_only=True, required=True)
+    eligible_programme_ids = serializers.ListField(
+        child=serializers.UUIDField(), write_only=True, required=False
+    )
+    eligible_programmes = ProgrammeSerializer(many=True, read_only=True)
 
     enrolled_count = serializers.IntegerField(read_only=True)
     instructor_count = serializers.IntegerField(read_only=True)
@@ -89,6 +93,8 @@ class CourseOfferingSerializer(serializers.ModelSerializer):
             "semester_id",
             "programme",
             "programme_id",
+            "eligible_programme_ids",
+            "eligible_programmes",
             "section",
             "capacity",
             "status",
@@ -109,6 +115,27 @@ class CourseOfferingSerializer(serializers.ModelSerializer):
             "created_at",
             "updated_at",
         ]
+
+    def validate(self, attrs):
+        course_id = attrs.get("course_id", getattr(self.instance, "course_id", None))
+        programme_id = attrs.get(
+            "programme_id", getattr(self.instance, "programme_id", None)
+        )
+        if course_id and programme_id:
+            course = Course.objects.filter(pk=course_id).first()
+            from apps.university.models import Programme
+
+            programme = Programme.objects.filter(pk=programme_id).first()
+            if course and programme and course.department_id != programme.department_id:
+                raise serializers.ValidationError(
+                    {
+                        "programme_id": (
+                            "The programme must belong to the same department "
+                            "as the selected course."
+                        )
+                    }
+                )
+        return attrs
 
 
 class CourseOfferingListSerializer(serializers.ModelSerializer):
@@ -136,6 +163,15 @@ class CourseOfferingListSerializer(serializers.ModelSerializer):
 class CourseInstructorSerializer(serializers.ModelSerializer):
     user = UserSerializer(read_only=True)
     user_id = serializers.UUIDField(write_only=True, required=True)
+
+    def validate_user_id(self, value):
+        from apps.accounts.models import StudentProfile
+
+        if StudentProfile.objects.filter(user_id=value).exists():
+            raise serializers.ValidationError(
+                "Students cannot be assigned teaching roles."
+            )
+        return value
 
     class Meta:
         model = CourseInstructor
@@ -213,11 +249,19 @@ class MyCourseEnrollmentSerializer(serializers.ModelSerializer):
             "semester": {
                 "id": str(o.semester_id),
                 "name": o.semester.name,
+                "isCurrent": o.semester.is_current,
             },
             "programme": {
                 "id": str(o.programme_id),
                 "name": o.programme.name,
             },
+            "programmes": [
+                {"id": str(o.programme_id), "name": o.programme.name},
+                *[
+                    {"id": str(p.id), "name": p.name}
+                    for p in o.eligible_programmes.all()
+                ],
+            ],
             "section": o.section,
             "capacity": o.capacity,
             "status": o.status,

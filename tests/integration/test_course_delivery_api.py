@@ -2,6 +2,7 @@ import pytest
 from django.contrib.auth import get_user_model
 from rest_framework.test import APIClient
 
+from apps.accounts.models import Role, RoleScope, UserRole
 from apps.academics.models import AcademicYear, Semester
 from apps.courses.models import (
     Course,
@@ -278,3 +279,84 @@ class TestModulesAndContent:
         res = api.get(f"/api/v1/modules/{module_id}/content/")
         assert res.status_code == 200
         assert len(res.json()["data"]) == 1
+
+
+class TestMyTeachingCourses:
+    url = "/api/v1/my/teaching-courses/"
+
+    def test_instructor_sees_only_own_offerings(self, api, lecturer, offering_setup):
+        api.force_authenticate(user=lecturer)
+        CourseInstructor.objects.create(
+            course_offering=offering_setup["offering"],
+            user=lecturer,
+            teaching_role=TeachingRole.PRIMARY_INSTRUCTOR,
+            can_manage_content=True,
+            can_grade=True,
+        )
+        res = api.get(self.url)
+        assert res.status_code == 200
+        rows = res.json()["data"]
+        assert len(rows) == 1
+        assert rows[0]["id"] == str(offering_setup["offering"].id)
+        assert rows[0]["canManageContent"] is True
+        assert rows[0]["canGrade"] is True
+
+    def test_admin_without_instructor_link_sees_all_offerings(
+        self, api, admin, offering_setup
+    ):
+        api.force_authenticate(user=admin)
+        assert not CourseInstructor.objects.filter(user=admin).exists()
+        res = api.get(self.url)
+        assert res.status_code == 200
+        rows = res.json()["data"]
+        assert len(rows) == 1
+        row = rows[0]
+        assert row["id"] == str(offering_setup["offering"].id)
+        assert row["canManageContent"] is True
+        assert row["canGrade"] is True
+
+    def test_staff_without_instructor_link_sees_all_offerings(
+        self, api, offering_setup
+    ):
+        staff = User.objects.create_user(
+            email="staff@x.y",
+            university_id="GU0009",
+            password="p",
+            status="ACTIVE",
+            is_staff=True,
+        )
+        api.force_authenticate(user=staff)
+        assert not CourseInstructor.objects.filter(user=staff).exists()
+        res = api.get(self.url)
+        assert res.status_code == 200
+        rows = res.json()["data"]
+        assert len(rows) == 1
+        assert rows[0]["canManageContent"] is True
+
+    def test_non_instructor_user_sees_none(self, api, lecturer, offering_setup):
+        api.force_authenticate(user=lecturer)
+        assert not CourseInstructor.objects.filter(user=lecturer).exists()
+        res = api.get(self.url)
+        assert res.status_code == 200
+        assert res.json()["data"] == []
+
+    def test_lecturer_with_global_role_still_sees_only_own_offerings(
+        self, api, lecturer, offering_setup
+    ):
+        # GLOBAL is the default scope for ordinary roles (e.g. LECTURER), so it
+        # must not grant the all-offerings admin view.
+        role = Role.objects.create(code="LECTURER", name="Lecturer")
+        UserRole.objects.create(user=lecturer, role=role, scope_type=RoleScope.GLOBAL)
+        CourseInstructor.objects.create(
+            course_offering=offering_setup["offering"],
+            user=lecturer,
+            teaching_role=TeachingRole.PRIMARY_INSTRUCTOR,
+            can_manage_content=True,
+            can_grade=True,
+        )
+        api.force_authenticate(user=lecturer)
+        res = api.get(self.url)
+        assert res.status_code == 200
+        rows = res.json()["data"]
+        assert len(rows) == 1
+        assert rows[0]["id"] == str(offering_setup["offering"].id)

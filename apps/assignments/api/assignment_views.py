@@ -27,22 +27,28 @@ class OfferingAssignmentListCreateView(APIView):
     def get(self, request, offering_id):
         offering = get_object_or_404(CourseOffering, pk=offering_id)
         qs = offering.assignments.all()
-        if not (request.user.is_staff or request.user.is_superuser):
+        can_manage = CanManageCourseContent().has_object_permission(
+            request, self, offering
+        )
+        if not can_manage:
             qs = qs.filter(status=AssignmentStatus.PUBLISHED)
-        return success_response(data=AssignmentListSerializer(qs, many=True).data)
+            return success_response(
+                data=AssignmentListSerializer(qs, many=True).data
+            )
+        return success_response(data=AssignmentSerializer(qs, many=True).data)
 
     def post(self, request, offering_id):
         offering = get_object_or_404(CourseOffering, pk=offering_id)
         self.check_object_permissions(request, offering)
 
-        serializer = AssignmentSerializer(data=request.data)
+        serializer = AssignmentSerializer(
+            data=request.data, context={"request": request}
+        )
         serializer.is_valid(raise_exception=True)
         serializer.validated_data.pop("course_offering_id", None)
 
-        assignment = Assignment.objects.create(
-            course_offering=offering,
-            created_by=request.user,
-            **serializer.validated_data,
+        assignment = serializer.save(
+            course_offering=offering, created_by=request.user
         )
         return success_response(
             data=AssignmentSerializer(assignment).data,
@@ -71,7 +77,9 @@ class AssignmentDetailView(APIView):
     def patch(self, request, pk):
         a = self._get(pk)
         self.check_object_permissions(request, a.course_offering)
-        serializer = AssignmentSerializer(a, data=request.data, partial=True)
+        serializer = AssignmentSerializer(
+            a, data=request.data, partial=True, context={"request": request}
+        )
         serializer.is_valid(raise_exception=True)
         serializer.validated_data.pop("course_offering_id", None)
         serializer.save()

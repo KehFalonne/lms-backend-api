@@ -260,6 +260,36 @@ class SubmissionFile(models.Model):
 
 
 # ──────────────────────────────────────────────────────────────────────
+# Assignment attachments — question sheets / briefs uploaded by the
+# instructor and made visible (downloadable) to students.
+# ──────────────────────────────────────────────────────────────────────
+class AssignmentFile(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+
+    assignment = models.ForeignKey(
+        Assignment,
+        on_delete=models.CASCADE,
+        related_name="files",
+    )
+    file = models.ForeignKey(
+        "files.File",
+        on_delete=models.PROTECT,
+        related_name="assignment_links",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        verbose_name = _("assignment file")
+        verbose_name_plural = _("assignment files")
+        constraints = [
+            models.UniqueConstraint(
+                fields=["assignment", "file"],
+                name="uniq_assignment_file",
+            ),
+        ]
+
+
+# ──────────────────────────────────────────────────────────────────────
 # Feedback (database doc §29) — separate so multiple entries are possible
 # ──────────────────────────────────────────────────────────────────────
 class Feedback(models.Model):

@@ -1,5 +1,6 @@
 from django.db import transaction
 from django.shortcuts import get_object_or_404
+from django.utils import timezone
 from rest_framework import status
 from rest_framework.views import APIView
 
@@ -17,6 +18,23 @@ from apps.courses.serializers import (
     CourseEnrollmentSerializer,
     MyCourseEnrollmentSerializer,
 )
+from apps.notifications.services.notification_service import NotificationService
+
+
+def _notify_instructors(*, offering, title: str, message: str, enrollment=None, student=None):
+    """Alert every instructor of the offering about an enrollment event."""
+    NotificationService.notify_course_instructors(
+        course_offering_id=offering.id,
+        type="ENROLLMENT",
+        title=title,
+        message=message,
+        entity_type="enrollment",
+        entity_id=enrollment.id if enrollment else None,
+        data={
+            "courseOfferingId": str(offering.id),
+            "studentId": str(student.id) if student else None,
+        },
+    )
 
 
 class OfferingEnrollmentListCreateView(APIView):
@@ -90,10 +108,148 @@ class OfferingEnrollmentListCreateView(APIView):
             student=student,
             **serializer.validated_data,
         )
+        _notify_instructors(
+            offering=offering,
+            enrollment=enrollment,
+            student=student,
+            title="New student enrolled",
+            message=(
+                f"{student.get_full_name() or student.email} enrolled in "
+                f"{offering.course.code} — Section {offering.section}."
+            ),
+        )
         return success_response(
             data=CourseEnrollmentSerializer(enrollment).data,
             message="Student enrolled successfully.",
             status=status.HTTP_201_CREATED,
+        )
+
+
+class StudentEnrollmentRequestView(APIView):
+    """POST /api/v1/course-offerings/{offering_id}/enrollment-request/"""
+
+    permission_classes = [IsAuthenticatedAndActive]
+
+    @transaction.atomic
+    def post(self, request, offering_id):
+        offering = get_object_or_404(
+            CourseOffering.objects.select_for_update().select_related("semester"),
+            pk=offering_id,
+        )
+        student_profile = getattr(request.user, "student_profile", None)
+        if not (request.user.is_staff or request.user.is_superuser):
+            if student_profile is None:
+                return error_response(
+                    "A student profile is required to request enrollment.",
+                    status_code=403,
+                )
+            eligible_programmes = offering.eligible_programmes.filter(
+                pk=student_profile.programme_id
+            ).exists()
+            if (
+                student_profile.programme_id != offering.programme_id
+                and not eligible_programmes
+            ):
+                return error_response(
+                    "You can only request courses in your assigned programme.",
+                    status_code=403,
+                )
+            if student_profile.current_level != offering.course.level:
+                return error_response(
+                    "You can only request courses for your current level.",
+                    status_code=403,
+                )
+        if offering.status != OfferingStatus.ACTIVE:
+            return error_response("This course is not open for enrollment.", status_code=400)
+        if not offering.semester.is_current:
+            return error_response(
+                "This course is not open for enrollment in the current semester.",
+                status_code=400,
+            )
+        if offering.is_full:
+            return error_response("Course is at full capacity.", status_code=409)
+
+        enrollment, created = CourseEnrollment.objects.get_or_create(
+            course_offering=offering,
+            student=request.user,
+            defaults={"status": EnrollmentStatus.ACTIVE},
+        )
+        if not created:
+            if enrollment.status == EnrollmentStatus.ACTIVE:
+                return error_response("You are already enrolled in this course.", status_code=409)
+            enrollment.status = EnrollmentStatus.ACTIVE
+            enrollment.withdrawn_at = None
+            enrollment.save(update_fields=["status", "withdrawn_at", "updated_at"])
+
+        message = (
+            f"{request.user.get_full_name() or request.user.email} was automatically "
+            f"enrolled in {offering.course.code} — Section {offering.section} "
+            f"(eligibility checks passed)."
+        )
+        _notify_instructors(
+            offering=offering,
+            enrollment=enrollment,
+            student=request.user,
+            title="Enrollment auto-approved",
+            message=message,
+        )
+        NotificationService.notify_admins(
+            type="ENROLLMENT",
+            title="Enrollment auto-approved",
+            message=message,
+            entity_type="enrollment",
+            entity_id=enrollment.id,
+            data={
+                "courseOfferingId": str(offering.id),
+                "studentId": str(request.user.id),
+            },
+        )
+
+        return success_response(
+            data=CourseEnrollmentSerializer(enrollment).data,
+            message="You have been enrolled.",
+            status=status.HTTP_201_CREATED if created else status.HTTP_200_OK,
+        )
+
+
+class EnrollmentDecisionView(APIView):
+    """PATCH /api/v1/course-offerings/{offering_id}/enrollments/{student_id}/decision/"""
+
+    permission_classes = [IsAuthenticatedAndActive]
+
+    @transaction.atomic
+    def patch(self, request, offering_id, student_id):
+        if not request.user.is_staff and not request.user.is_superuser:
+            return error_response("Only staff can approve enrollment requests.", status_code=403)
+        decision = request.data.get("status")
+        if decision not in {EnrollmentStatus.ACTIVE, EnrollmentStatus.WITHDRAWN}:
+            return error_response("Status must be ACTIVE or WITHDRAWN.", status_code=400)
+        offering = get_object_or_404(
+            CourseOffering.objects.select_for_update(), pk=offering_id
+        )
+        enrollment = get_object_or_404(
+            CourseEnrollment, course_offering=offering, student_id=student_id
+        )
+        if decision == EnrollmentStatus.ACTIVE and enrollment.status != EnrollmentStatus.ACTIVE:
+            if offering.is_full:
+                return error_response("Course is at full capacity.", status_code=409)
+        enrollment.status = decision
+        enrollment.withdrawn_at = timezone.now() if decision == EnrollmentStatus.WITHDRAWN else None
+        enrollment.save(update_fields=["status", "withdrawn_at", "updated_at"])
+        if decision == EnrollmentStatus.ACTIVE:
+            _notify_instructors(
+                offering=offering,
+                enrollment=enrollment,
+                student=enrollment.student,
+                title="Enrollment approved",
+                message=(
+                    f"{enrollment.student.get_full_name() or enrollment.student.email} "
+                    f"was approved into {offering.course.code} — Section {offering.section}."
+                ),
+            )
+        return success_response(
+            data=CourseEnrollmentSerializer(enrollment).data,
+            message="Enrollment decision saved.",
         )
 
 
@@ -138,6 +294,16 @@ class OfferingBulkEnrollView(APIView):
                 )
             )
         CourseEnrollment.objects.bulk_create(created)
+
+        if created:
+            _notify_instructors(
+                offering=offering,
+                title="Bulk enrollment",
+                message=(
+                    f"{len(created)} students were enrolled in {offering.course.code} "
+                    f"— Section {offering.section}."
+                ),
+            )
 
         return success_response(
             data={
@@ -186,6 +352,7 @@ class MyCoursesView(APIView):
                 "course_offering__semester",
                 "course_offering__programme",
             )
+            .prefetch_related("course_offering__eligible_programmes")
             .order_by("-enrolled_at")
         )
         return success_response(data=MyCourseEnrollmentSerializer(qs, many=True).data)

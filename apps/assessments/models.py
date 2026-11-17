@@ -443,7 +443,7 @@ class Assessment(models.Model):
         null=True,
         blank=True,
         related_name="ca_sessions_invigilated",
-        limit_choices_to={"is_staff": True, "is_active": True},
+        limit_choices_to={"staff_profile__isnull": False, "is_active": True},
         help_text=_("Active staff member assigned to oversee this CA session."),
     )
 

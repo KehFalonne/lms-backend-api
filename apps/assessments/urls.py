@@ -20,7 +20,9 @@ from .api.attempt_views import (
     SubmitAttemptView,
 )
 from .api.bank_views import (
+    BankQuestionAnswerKeyImportView,
     BankQuestionListCreateView,
+    BankQuestionWordImportView,
     QuestionBankDetailView,
     QuestionBankListCreateView,
     QuestionDetailView,
@@ -28,6 +30,7 @@ from .api.bank_views import (
 )
 from .api.ca_views import (
     CAInvigilatorListView,
+    AssignCAInvigilatorView,
     CAInvigilatorSessionsView,
     CAMonitoringView,
     EnterAssessmentCodeView,
@@ -49,6 +52,16 @@ urlpatterns = [
         "question-banks/<uuid:bank_id>/questions/",
         BankQuestionListCreateView.as_view(),
         name="bank-questions",
+    ),
+    path(
+        "question-banks/<uuid:bank_id>/questions/import-word/",
+        BankQuestionWordImportView.as_view(),
+        name="bank-questions-import-word",
+    ),
+    path(
+        "question-banks/<uuid:bank_id>/questions/import-answer-key/",
+        BankQuestionAnswerKeyImportView.as_view(),
+        name="bank-questions-import-answer-key",
     ),
     path("questions/<uuid:pk>/", QuestionDetailView.as_view(), name="question-detail"),
     path(
@@ -139,6 +152,11 @@ urlpatterns = [
         "ca-sessions/",
         CAInvigilatorSessionsView.as_view(),
         name="ca-sessions",
+    ),
+    path(
+        "assessments/<uuid:pk>/ca-invigilator/",
+        AssignCAInvigilatorView.as_view(),
+        name="assessment-ca-invigilator",
     ),
     path(
         "assessments/<uuid:pk>/ca-monitoring/",

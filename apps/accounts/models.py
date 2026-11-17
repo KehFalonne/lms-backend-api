@@ -56,6 +56,14 @@ class User(AbstractBaseUser, PermissionsMixin):
         blank=True,
         help_text=_("Placeholder — will become a File FK in Sprint 6."),
     )
+    avatar_file = models.ForeignKey(
+        "files.File",
+        verbose_name=_("avatar file"),
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="avatar_users",
+    )
 
     status = models.CharField(
         _("status"),

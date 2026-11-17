@@ -61,6 +61,17 @@ class ProgressService:
     ) -> ContentProgress:
         from django.utils import timezone
 
+        existing = ContentProgress.objects.filter(
+            student=student, content_item=content_item
+        ).first()
+        if (
+            existing
+            and existing.status == "COMPLETED"
+            and status in {"IN_PROGRESS", "NOT_STARTED"}
+        ):
+            # Completion is sticky — never downgrade a finished item.
+            return existing
+
         defaults = {}
         if status:
             defaults["status"] = status

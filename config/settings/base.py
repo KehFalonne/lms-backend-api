@@ -60,6 +60,7 @@ THIRD_PARTY_APPS = [
     "django_filters",
     "drf_spectacular",
     "channels",
+    "storages",
     "django_celery_results",
 ]
 
@@ -94,6 +95,7 @@ MIDDLEWARE = [
     "django.middleware.common.CommonMiddleware",
     "django.middleware.csrf.CsrfViewMiddleware",
     "django.contrib.auth.middleware.AuthenticationMiddleware",
+    "apps.audit.middleware.AuditContextMiddleware",
     "django.contrib.messages.middleware.MessageMiddleware",
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
     "apps.common.middleware.request_id.RequestIDMiddleware",
@@ -183,7 +185,7 @@ DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 # ──────────────────────────────────────────────────────────────────────
 REST_FRAMEWORK = {
     "DEFAULT_AUTHENTICATION_CLASSES": (
-        "rest_framework_simplejwt.authentication.JWTAuthentication",
+        "apps.accounts.authentication.SessionJWTAuthentication",
     ),
     "DEFAULT_PERMISSION_CLASSES": ("rest_framework.permissions.IsAuthenticated",),
     "DEFAULT_PAGINATION_CLASS": "apps.common.pagination.page_number.StandardPageNumberPagination",
@@ -272,13 +274,74 @@ SPECTACULAR_SETTINGS = {
 }
 
 
-# Storage
-STORAGE_PROVIDER = env("STORAGE_PROVIDER", default="LOCAL")
+# ──────────────────────────────────────────────────────────────────────
+# Storage Configuration
+# Supports LOCAL, R2, S3 and MINIO
+# ──────────────────────────────────────────────────────────────────────
+
+STORAGE_PROVIDER = env("STORAGE_PROVIDER", default="LOCAL").upper()
+
 AWS_ACCESS_KEY_ID = env("AWS_ACCESS_KEY_ID", default="")
 AWS_SECRET_ACCESS_KEY = env("AWS_SECRET_ACCESS_KEY", default="")
 AWS_STORAGE_BUCKET_NAME = env("AWS_STORAGE_BUCKET_NAME", default="")
 AWS_S3_REGION_NAME = env("AWS_S3_REGION_NAME", default="")
 AWS_S3_ENDPOINT_URL = env("AWS_S3_ENDPOINT_URL", default="")
+
+SUPPORTED_STORAGE_PROVIDERS = {"LOCAL", "R2", "S3", "MINIO"}
+
+if STORAGE_PROVIDER not in SUPPORTED_STORAGE_PROVIDERS:
+    raise ValueError(f"Unsupported STORAGE_PROVIDER: {STORAGE_PROVIDER}")
+
+# Default: local filesystem storage
+if STORAGE_PROVIDER == "LOCAL":
+
+    STORAGES = {
+        "default": {
+            "BACKEND": "django.core.files.storage.FileSystemStorage",
+        },
+        "staticfiles": {
+            "BACKEND": "django.contrib.staticfiles.storage.StaticFilesStorage",
+        },
+    }
+
+# Cloud storage: R2, Amazon S3 or MinIO
+else:
+
+    if not AWS_ACCESS_KEY_ID:
+        raise ValueError("AWS_ACCESS_KEY_ID is required.")
+
+    if not AWS_SECRET_ACCESS_KEY:
+        raise ValueError("AWS_SECRET_ACCESS_KEY is required.")
+
+    if not AWS_STORAGE_BUCKET_NAME:
+        raise ValueError("AWS_STORAGE_BUCKET_NAME is required.")
+
+    if not AWS_S3_REGION_NAME:
+        raise ValueError("AWS_S3_REGION_NAME is required.")
+
+    if STORAGE_PROVIDER in {"R2", "MINIO"} and not AWS_S3_ENDPOINT_URL:
+        raise ValueError(f"AWS_S3_ENDPOINT_URL is required for {STORAGE_PROVIDER}.")
+
+    STORAGES = {
+        "default": {
+            "BACKEND": "storages.backends.s3.S3Storage",
+            "OPTIONS": {
+                "access_key": AWS_ACCESS_KEY_ID,
+                "secret_key": AWS_SECRET_ACCESS_KEY,
+                "bucket_name": AWS_STORAGE_BUCKET_NAME,
+                "region_name": AWS_S3_REGION_NAME,
+                "endpoint_url": AWS_S3_ENDPOINT_URL or None,
+                "signature_version": "s3v4",
+                "default_acl": None,
+                "file_overwrite": False,
+                "querystring_auth": True,
+                "querystring_expire": 300,
+            },
+        },
+        "staticfiles": {
+            "BACKEND": "django.contrib.staticfiles.storage.StaticFilesStorage",
+        },
+    }
 
 
 # ──────────────────────────────────────────────────────────────────────

@@ -19,6 +19,9 @@ from apps.accounts.models import (
 
 User = get_user_model()
 
+# Roles that imply teaching duties — never assignable to student-profile users.
+TEACHING_ROLE_CODES = {"LECTURER", "TEACHING_ASSISTANT"}
+
 
 class RBACError(Exception):
     def __init__(self, message: str, code: str = "rbac_error"):
@@ -111,6 +114,15 @@ class RBACService:
             role = Role.objects.get(pk=role_id)
         except Role.DoesNotExist:
             raise RBACError("Role not found.", code="role_not_found")
+
+        if role.code in TEACHING_ROLE_CODES:
+            from apps.accounts.models import StudentProfile
+
+            if StudentProfile.objects.filter(user_id=user.pk).exists():
+                raise RBACError(
+                    "Students cannot be assigned teaching roles.",
+                    code="teaching_role_for_student",
+                )
 
         assignment = UserRole(
             user=user,

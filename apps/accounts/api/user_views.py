@@ -9,6 +9,7 @@ Filtering (documented):
 from drf_spectacular.utils import extend_schema, OpenApiParameter
 from drf_spectacular.types import OpenApiTypes
 from django.contrib.auth import get_user_model
+from django.utils import timezone
 from django_filters.rest_framework import DjangoFilterBackend
 from rest_framework import filters, status, viewsets
 from rest_framework.decorators import action
@@ -18,6 +19,7 @@ from rest_framework.permissions import IsAdminUser
 from apps.common.responses import error_response, success_response
 from apps.accounts.serializers import (
     AssignRoleSerializer,
+    AdminPasswordResetSerializer,
     UserCreateSerializer,
     UserRoleSerializer,
     UserMeSerializer,
@@ -120,6 +122,19 @@ class UserViewSet(viewsets.ModelViewSet):
             data=UserSerializer(user).data,
             message="User deactivated successfully.",
         )
+
+    @action(detail=True, methods=["post"], url_path="reset-password")
+    def reset_password(self, request, pk=None):
+        """Allow an administrator to set a new password without exposing it."""
+        user = self.get_object()
+        serializer = AdminPasswordResetSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        user.set_password(serializer.validated_data["password"])
+        user.save(update_fields=["password", "updated_at"])
+        user.sessions.filter(revoked_at__isnull=True).update(
+            revoked_at=timezone.now()
+        )
+        return success_response(message="User password reset successfully.")
 
     @action(detail=True, methods=["get"], url_path="roles")
     def list_roles(self, request, pk=None):

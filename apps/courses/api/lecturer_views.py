@@ -29,20 +29,30 @@ class MyTeachingCoursesView(APIView):
     permission_classes = [IsAuthenticatedAndActive]
 
     def get(self, request):
-        links = (
-            CourseInstructor.objects.filter(user=request.user)
-            .select_related(
-                "course_offering",
-                "course_offering__course",
-                "course_offering__semester",
-                "course_offering__programme",
-            )
-            .order_by("course_offering__course__code")
-        )
+        user = request.user
+        is_admin = user.is_superuser or user.is_staff
+        if is_admin:
+            rows = [
+                (o, "ADMINISTRATOR", True, True)
+                for o in CourseOffering.objects.select_related(
+                    "course", "semester", "programme"
+                ).order_by("course__code", "section")
+            ]
+        else:
+            rows = [
+                (link.course_offering, link.teaching_role, link.can_grade, link.can_manage_content)
+                for link in CourseInstructor.objects.filter(user=user)
+                .select_related(
+                    "course_offering",
+                    "course_offering__course",
+                    "course_offering__semester",
+                    "course_offering__programme",
+                )
+                .order_by("course_offering__course__code")
+            ]
 
         data = []
-        for link in links:
-            o = link.course_offering
+        for o, teaching_role, can_grade, can_manage in rows:
             data.append(
                 {
                     "id": str(o.id),
@@ -63,9 +73,9 @@ class MyTeachingCoursesView(APIView):
                     },
                     "section": o.section,
                     "status": o.status,
-                    "teachingRole": link.teaching_role,
-                    "canGrade": link.can_grade,
-                    "canManageContent": link.can_manage_content,
+                    "teachingRole": teaching_role,
+                    "canGrade": can_grade,
+                    "canManageContent": can_manage,
                     "studentCount": CourseEnrollment.objects.filter(
                         course_offering=o,
                         status=EnrollmentStatus.ACTIVE,
@@ -171,6 +181,7 @@ class LecturerDashboardStatsView(APIView):
                         "studentId": str(s.student_id),
                         "assignmentTitle": s.assignment.title,
                         "assignmentId": str(s.assignment_id),
+                        "courseOfferingId": str(s.assignment.course_offering_id),
                         "courseCode": s.assignment.course_offering.course.code,
                         "submittedAt": (
                             s.submitted_at.isoformat() if s.submitted_at else None

@@ -65,6 +65,19 @@ def make_storage_key(filename: str, prefix: str = "uploads") -> str:
     return f"{prefix}/{uuid.uuid4().hex}{'.' + ext if ext else ''}"
 
 
+def _s3_client():
+    """boto3 client for S3-compatible providers (S3, R2, MinIO)."""
+    import boto3
+
+    return boto3.client(
+        "s3",
+        aws_access_key_id=settings.AWS_ACCESS_KEY_ID,
+        aws_secret_access_key=settings.AWS_SECRET_ACCESS_KEY,
+        region_name=settings.AWS_S3_REGION_NAME or None,
+        endpoint_url=settings.AWS_S3_ENDPOINT_URL or None,
+    )
+
+
 # ──────────────────────────────────────────────────────────────────────
 # Public API
 # ──────────────────────────────────────────────────────────────────────
@@ -86,17 +99,7 @@ def generate_upload_target(
             "headers": {"Content-Type": "application/octet-stream"},
         }
 
-    # S3-compatible
-    import boto3
-
-    client = boto3.client(
-        "s3",
-        aws_access_key_id=settings.AWS_ACCESS_KEY_ID,
-        aws_secret_access_key=settings.AWS_SECRET_ACCESS_KEY,
-        region_name=settings.AWS_S3_REGION_NAME,
-        endpoint_url=settings.AWS_S3_ENDPOINT_URL or None,
-    )
-    url = client.generate_presigned_url(
+    url = _s3_client().generate_presigned_url(
         "put_object",
         Params={
             "Bucket": settings.AWS_STORAGE_BUCKET_NAME,
@@ -121,16 +124,7 @@ def generate_download_url(storage_key: str, expires_in: int = 600) -> str:
         sig = _local_sign(storage_key, ttl=expires_in)
         return f"/api/v1/files/local-download/?key={storage_key}&sig={sig}"
 
-    import boto3
-
-    client = boto3.client(
-        "s3",
-        aws_access_key_id=settings.AWS_ACCESS_KEY_ID,
-        aws_secret_access_key=settings.AWS_SECRET_ACCESS_KEY,
-        region_name=settings.AWS_S3_REGION_NAME,
-        endpoint_url=settings.AWS_S3_ENDPOINT_URL or None,
-    )
-    return client.generate_presigned_url(
+    return _s3_client().generate_presigned_url(
         "get_object",
         Params={
             "Bucket": settings.AWS_STORAGE_BUCKET_NAME,
@@ -138,6 +132,21 @@ def generate_download_url(storage_key: str, expires_in: int = 600) -> str:
         },
         ExpiresIn=expires_in,
     )
+
+
+def remote_file_exists(storage_key: str) -> bool:
+    """HEAD-check that an object landed in the remote bucket."""
+    from botocore.exceptions import ClientError
+
+    try:
+        _s3_client().head_object(
+            Bucket=settings.AWS_STORAGE_BUCKET_NAME, Key=storage_key
+        )
+        return True
+    except ClientError as exc:
+        if exc.response.get("Error", {}).get("Code") in ("404", "NoSuchKey"):
+            return False
+        raise
 
 
 def save_local_upload(storage_key: str, content) -> None:

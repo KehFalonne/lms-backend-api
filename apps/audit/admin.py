@@ -7,7 +7,7 @@ from .models import AuditLog
 class AuditLogAdmin(admin.ModelAdmin):
     list_display = ("action", "actor", "entity_type", "entity_id", "created_at")
     list_filter = ("action", "entity_type")
-    search_fields = ("actor__university_id", "action", "entity_type")
+    search_fields = ("actor__university_id", "action", "entity_type", "entity_id")
     autocomplete_fields = ("actor",)
     readonly_fields = (
         "id",

@@ -9,7 +9,9 @@ from .api.gradebook_views import GradebookView
 from .api.course_views import CourseViewSet
 from .api.enrollment_views import (
     EnrollmentDeleteView,
+    EnrollmentDecisionView,
     MyCourseOfferingView,
+    StudentEnrollmentRequestView,
     MyCoursesView,
     OfferingBulkEnrollView,
     OfferingEnrollmentListCreateView,
@@ -43,6 +45,11 @@ urlpatterns = [
         name="offering-enrollments",
     ),
     path(
+        "course-offerings/<uuid:offering_id>/enrollment-request/",
+        StudentEnrollmentRequestView.as_view(),
+        name="student-enrollment-request",
+    ),
+    path(
         "course-offerings/<uuid:offering_id>/enrollments/bulk/",
         OfferingBulkEnrollView.as_view(),
         name="offering-enrollments-bulk",
@@ -51,6 +58,11 @@ urlpatterns = [
         "course-offerings/<uuid:offering_id>/enrollments/<uuid:student_id>/",
         EnrollmentDeleteView.as_view(),
         name="enrollment-delete",
+    ),
+    path(
+        "course-offerings/<uuid:offering_id>/enrollments/<uuid:student_id>/decision/",
+        EnrollmentDecisionView.as_view(),
+        name="enrollment-decision",
     ),
     # My courses
     path("my/courses/", MyCoursesView.as_view(), name="my-courses"),

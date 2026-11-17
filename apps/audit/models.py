@@ -2,6 +2,7 @@ import uuid
 
 from django.conf import settings
 from django.db import models
+from django.core.exceptions import ValidationError
 from django.utils.translation import gettext_lazy as _
 
 
@@ -46,6 +47,14 @@ class AuditLog(models.Model):
             models.Index(fields=["entity_type", "entity_id"]),
             models.Index(fields=["actor", "-created_at"]),
         ]
+
+    def save(self, *args, **kwargs):
+        if not self._state.adding:
+            raise ValidationError("Audit logs are immutable and cannot be updated.")
+        return super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        raise ValidationError("Audit logs are immutable and cannot be deleted.")
 
     def __str__(self) -> str:
         return f"{self.action} on {self.entity_type} by {self.actor_id}"

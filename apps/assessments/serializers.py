@@ -179,10 +179,14 @@ class AssessmentQuestionStudentSerializer(serializers.ModelSerializer):
 
 
 class AssessmentSerializer(serializers.ModelSerializer):
-    course_offering_id = serializers.UUIDField(write_only=True, required=True)
+    # The offering is supplied by the nested URL:
+    # /course-offerings/{offering_id}/assessments/
+    course_offering_id = serializers.UUIDField(write_only=True, required=False)
     invigilator_id = serializers.PrimaryKeyRelatedField(
         source="ca_invigilator",
-        queryset=User.objects.filter(is_staff=True, is_active=True, status="ACTIVE"),
+        queryset=User.objects.filter(
+            staff_profile__isnull=False, is_active=True, status="ACTIVE"
+        ),
         required=False,
         allow_null=True,
     )
@@ -382,9 +386,36 @@ class AttemptSerializer(serializers.ModelSerializer):
 class AttemptDetailSerializer(AttemptSerializer):
     answers = StudentAnswerSerializer(many=True, read_only=True)
     ca_invigilator_message = serializers.SerializerMethodField()
+    passing_score = serializers.DecimalField(
+        source="assessment.passing_score",
+        max_digits=6,
+        decimal_places=2,
+        read_only=True,
+    )
+    total_points = serializers.DecimalField(
+        source="assessment.total_points",
+        max_digits=8,
+        decimal_places=2,
+        read_only=True,
+    )
+    passed = serializers.SerializerMethodField()
 
     class Meta(AttemptSerializer.Meta):
-        fields = AttemptSerializer.Meta.fields + ["answers", "ca_invigilator_message"]
+        fields = AttemptSerializer.Meta.fields + [
+            "answers",
+            "ca_invigilator_message",
+            "passing_score",
+            "total_points",
+            "passed",
+        ]
+
+    def get_passed(self, obj):
+        if obj.status not in (AttemptStatus.AUTO_GRADED, AttemptStatus.GRADED):
+            return None
+        try:
+            return obj.percentage >= obj.assessment.passing_score
+        except TypeError:
+            return None
 
     def get_ca_invigilator_message(self, obj):
         action = (

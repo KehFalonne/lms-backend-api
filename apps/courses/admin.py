@@ -29,7 +29,11 @@ class CoursePrerequisiteAdmin(admin.ModelAdmin):
 @admin.register(CourseOffering)
 class CourseOfferingAdmin(admin.ModelAdmin):
     list_display = ("course", "semester", "programme", "section", "capacity", "status")
-    list_filter = ("status", "semester", "programme")
+    list_filter = (
+        "status",
+        "semester",
+        "programme",
+    )
     search_fields = ("course__code", "course__title")
     autocomplete_fields = ("course", "semester", "programme")
     readonly_fields = ("id", "published_at", "created_at", "updated_at")

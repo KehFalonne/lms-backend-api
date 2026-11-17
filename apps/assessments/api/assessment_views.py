@@ -1,3 +1,5 @@
+from uuid import UUID
+
 from django.shortcuts import get_object_or_404
 from rest_framework import status
 from rest_framework.views import APIView
@@ -17,8 +19,50 @@ from apps.assessments.serializers import (
     AssessmentSerializer,
 )
 from apps.common.responses import error_response, success_response
-from apps.courses.models import CourseOffering
+from apps.courses.models import CourseInstructor, CourseOffering
 from apps.courses.permissions import CanManageCourseContent
+
+
+def _is_administrator(user):
+    return user.is_superuser or user.has_role(
+        "SUPER_ADMIN",
+        "UNIVERSITY_ADMIN",
+        "FACULTY_ADMIN",
+        "DEPARTMENT_ADMIN",
+    )
+
+
+def _can_manage(user, offering) -> bool:
+    return (
+        user.is_superuser
+        or getattr(user, "is_staff", False)
+        or CourseInstructor.objects.filter(
+            course_offering=offering, user=user, can_manage_content=True
+        ).exists()
+    )
+
+
+def _can_publish(user) -> bool:
+    """Admins and staff may publish; lecturers only create and edit drafts."""
+    return _is_administrator(user) or getattr(user, "is_staff", False)
+
+
+CA_CONFIG_FIELDS = {
+    "ca_opens_at",
+    "ca_last_entry_at",
+    "serve_question_count",
+    "randomize_question_order",
+    "proctoring_enabled",
+    "proctoring_max_violations",
+    "proctoring_mode",
+    "proctoring_enforcement",
+}
+
+
+def _reject_ca_fields_for(user, validated_data) -> bool:
+    if _can_publish(user):
+        return False
+    return CA_CONFIG_FIELDS & set(validated_data)
 
 
 class OfferingAssessmentListCreateView(APIView):
@@ -35,7 +79,7 @@ class OfferingAssessmentListCreateView(APIView):
     def get(self, request, offering_id):
         offering = get_object_or_404(CourseOffering, pk=offering_id)
         qs = offering.assessments.all()
-        if not (request.user.is_staff or request.user.is_superuser):
+        if not _can_manage(request.user, offering):
             qs = qs.filter(status=AssessmentStatus.PUBLISHED)
         return success_response(data=AssessmentListSerializer(qs, many=True).data)
 
@@ -45,6 +89,17 @@ class OfferingAssessmentListCreateView(APIView):
 
         serializer = AssessmentSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
+        if "ca_invigilator" in serializer.validated_data and not _is_administrator(
+            request.user
+        ):
+            return error_response(
+                "Only administrators may assign CA invigilators.", status_code=403
+            )
+        if _reject_ca_fields_for(request.user, serializer.validated_data):
+            return error_response(
+                "Only administrators and staff may configure CA exam settings.",
+                status_code=403,
+            )
         serializer.validated_data.pop("course_offering_id", None)
 
         assessment = Assessment.objects.create(
@@ -75,8 +130,8 @@ class AssessmentDetailView(APIView):
 
     def get(self, request, pk):
         a = self._get(pk)
-        # Students get a different shape
-        if not (request.user.is_staff or request.user.is_superuser):
+        # Students get a different shape; anyone who manages the offering gets the full one.
+        if not _can_manage(request.user, a.course_offering):
             return success_response(
                 data=AssessmentDetailStudentSerializer(
                     a, context={"request": request}
@@ -89,6 +144,17 @@ class AssessmentDetailView(APIView):
         self.check_object_permissions(request, a.course_offering)
         serializer = AssessmentSerializer(a, data=request.data, partial=True)
         serializer.is_valid(raise_exception=True)
+        if "ca_invigilator" in serializer.validated_data and not _is_administrator(
+            request.user
+        ):
+            return error_response(
+                "Only administrators may assign CA invigilators.", status_code=403
+            )
+        if _reject_ca_fields_for(request.user, serializer.validated_data):
+            return error_response(
+                "Only administrators and staff may configure CA exam settings.",
+                status_code=403,
+            )
         serializer.validated_data.pop("course_offering_id", None)
         serializer.save()
         return success_response(data=AssessmentSerializer(a).data)
@@ -101,14 +167,18 @@ class AssessmentDetailView(APIView):
 
 
 class AssessmentPublishView(APIView):
-    """POST /api/v1/assessments/{id}/publish/"""
+    """POST /api/v1/assessments/{id}/publish/ — admins and staff only."""
 
     serializer_class = AssessmentSerializer
-    permission_classes = [IsAuthenticatedAndActive, CanManageCourseContent]
+    permission_classes = [IsAuthenticatedAndActive]
 
     def post(self, request, pk):
         a = get_object_or_404(Assessment, pk=pk)
-        self.check_object_permissions(request, a.course_offering)
+        if not _can_publish(request.user):
+            return error_response(
+                "Only administrators and staff may publish assessments.",
+                status_code=403,
+            )
         if not a.assessment_questions.exists():
             return error_response(
                 "Cannot publish an assessment with no questions.", status_code=400
@@ -186,6 +256,14 @@ class AssessmentQuestionListCreateView(APIView):
         a = get_object_or_404(Assessment, pk=assessment_id)
         self.check_object_permissions(request, a.course_offering)
 
+        question_ids = (
+            request.data.getlist("question_ids")
+            if hasattr(request.data, "getlist")
+            else request.data.get("question_ids")
+        )
+        if question_ids:
+            return self._bulk_attach(request, a, question_ids)
+
         serializer = AssessmentQuestionSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
 
@@ -194,6 +272,12 @@ class AssessmentQuestionListCreateView(APIView):
             question = Question.objects.get(pk=question_id, deleted_at__isnull=True)
         except Question.DoesNotExist:
             return error_response("Question not found.", status_code=400)
+
+        if question.question_bank.course_id != a.course_offering.course_id:
+            return error_response(
+                "This question belongs to a different course question bank.",
+                status_code=403,
+            )
 
         if AssessmentQuestion.objects.filter(assessment=a, question=question).exists():
             return error_response(
@@ -217,6 +301,51 @@ class AssessmentQuestionListCreateView(APIView):
         return success_response(
             data=AssessmentQuestionSerializer(aq).data,
             message="Question added to assessment.",
+            status=status.HTTP_201_CREATED,
+        )
+
+    def _bulk_attach(self, request, a, question_ids):
+        if isinstance(question_ids, str):
+            question_ids = [question_ids]
+
+        next_position = (
+            a.assessment_questions.order_by("-position")
+            .values_list("position", flat=True)
+            .first()
+            or 0
+        ) + 1
+        existing = set(a.assessment_questions.values_list("question_id", flat=True))
+        created = []
+
+        for qid in question_ids:
+            try:
+                qid = UUID(str(qid))
+            except (ValueError, TypeError, AttributeError):
+                continue
+            if qid in existing:
+                continue
+            try:
+                question = Question.objects.get(pk=qid, deleted_at__isnull=True)
+            except Question.DoesNotExist:
+                continue
+            if question.question_bank.course_id != a.course_offering.course_id:
+                continue
+            created.append(
+                AssessmentQuestion.objects.create(
+                    assessment=a,
+                    question=question,
+                    position=next_position,
+                    points=question.default_points,
+                )
+            )
+            next_position += 1
+            existing.add(qid)
+
+        if created:
+            a.recompute_total_points()
+        return success_response(
+            data=AssessmentQuestionSerializer(created, many=True).data,
+            message=f"{len(created)} questions added to assessment.",
             status=status.HTTP_201_CREATED,
         )
 

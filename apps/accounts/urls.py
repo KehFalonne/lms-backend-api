@@ -21,6 +21,7 @@ from apps.accounts.api.auth_views import (
     LoginView,
     LogoutView,
     MeView,
+    AvatarView,
     RefreshTokenView,
     ResetPasswordView,
 )
@@ -32,6 +33,7 @@ auth_urlpatterns = [
     path("token/refresh/", RefreshTokenView.as_view(), name="token-refresh"),
     path("logout/", LogoutView.as_view(), name="logout"),
     path("me/", MeView.as_view(), name="me"),
+    path("me/avatar/", AvatarView.as_view(), name="me-avatar"),
     path("change-password/", ChangePasswordView.as_view(), name="change-password"),
     path("forgot-password/", ForgotPasswordView.as_view(), name="forgot-password"),
     path("reset-password/", ResetPasswordView.as_view(), name="reset-password"),

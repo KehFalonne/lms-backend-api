@@ -74,6 +74,7 @@ class ContentProgressView(APIView):
         if (
             status_value == "COMPLETED"
             and item.content_type in ("VIDEO", "AUDIO")
+            and item.is_required
             and (progress_percent is None or progress_percent < 90)
         ):
             existing_progress = (

@@ -16,6 +16,7 @@ from apps.grading.models import (
     GradeCategory,
     GradeHistory,
     GradeItem,
+    GradeSourceType,
     GradeStatus,
 )
 
@@ -123,9 +124,35 @@ class GradeService:
                 ],
             }
         """
-        categories = GradeCategory.objects.filter(
-            course_offering_id=course_offering_id
-        ).order_by("position")
+        categories = list(
+            GradeCategory.objects.filter(
+                course_offering_id=course_offering_id
+            ).order_by("position")
+        )
+
+        # No category structure configured → plain average of every grade item
+        # (auto-synced assignment/assessment items have no category yet).
+        if not categories:
+            items = GradeItem.objects.filter(course_offering_id=course_offering_id)
+            scores = []
+            for item in items:
+                g = Grade.objects.filter(
+                    grade_item=item,
+                    student=student,
+                ).first()
+                if g and g.score is not None and item.max_score and item.max_score > 0:
+                    scores.append((g.score / item.max_score) * 100)
+
+            overall = (
+                (sum(scores) / Decimal(len(scores))).quantize(Decimal("0.01"))
+                if scores
+                else Decimal("0")
+            )
+            return {
+                "percentage": overall,
+                "letterGrade": GradeService._letter_grade(overall),
+                "categories": [],
+            }
 
         breakdown = []
         overall = Decimal("0")
@@ -261,15 +288,24 @@ class GradeService:
     def sync_from_assignment(*, submission, graded_by=None) -> Grade | None:
         """
         Called by assignment grading service after a submission is graded.
-        Finds (or creates) the linked GradeItem and writes the grade.
+        Creates the linked GradeItem on first use, then writes the grade.
         """
-        item = GradeItem.objects.filter(
-            source_type="ASSIGNMENT",
-            source_id=submission.assignment_id,
-        ).first()
-        if not item:
+        assignment = submission.assignment
+        if not assignment.max_score or assignment.max_score <= 0:
             return None
-        return GradeService.set_grade(
+        item, _created = GradeItem.objects.get_or_create(
+            source_type=GradeSourceType.ASSIGNMENT,
+            source_id=assignment.id,
+            defaults={
+                "course_offering_id": assignment.course_offering_id,
+                "name": assignment.title,
+                "max_score": assignment.max_score,
+            },
+        )
+        if item.max_score != assignment.max_score:
+            item.max_score = assignment.max_score
+            item.save(update_fields=["max_score", "updated_at"])
+        grade = GradeService.set_grade(
             grade_item=item,
             student=submission.student,
             score=submission.score,
@@ -277,19 +313,31 @@ class GradeService:
             feedback=submission.feedback or "",
             reason="Auto-synced from assignment submission",
         )
+        GradeService._mark_published(item=item, grade=grade)
+        return grade
 
     @staticmethod
     def sync_from_attempt(*, attempt) -> Grade | None:
         """
         Called by assessment auto-grading service.
+        Creates the linked GradeItem on first use, then writes the grade.
         """
-        item = GradeItem.objects.filter(
-            source_type="ASSESSMENT",
-            source_id=attempt.assessment_id,
-        ).first()
-        if not item:
+        assessment = attempt.assessment
+        if not assessment.total_points or assessment.total_points <= 0:
             return None
-        return GradeService.set_grade(
+        item, _created = GradeItem.objects.get_or_create(
+            source_type=GradeSourceType.ASSESSMENT,
+            source_id=assessment.id,
+            defaults={
+                "course_offering_id": assessment.course_offering_id,
+                "name": assessment.title,
+                "max_score": assessment.total_points,
+            },
+        )
+        if item.max_score != assessment.total_points:
+            item.max_score = assessment.total_points
+            item.save(update_fields=["max_score", "updated_at"])
+        grade = GradeService.set_grade(
             grade_item=item,
             student=attempt.student,
             score=attempt.total_score,
@@ -297,6 +345,19 @@ class GradeService:
             feedback="",
             reason="Auto-synced from assessment attempt",
         )
+        GradeService._mark_published(item=item, grade=grade)
+        return grade
+
+    @staticmethod
+    def _mark_published(*, item: GradeItem, grade: Grade) -> None:
+        """Assignment/assessment grades are visible to students already."""
+        if grade.status != GradeStatus.PUBLISHED:
+            grade.status = GradeStatus.PUBLISHED
+            grade.published_at = timezone.now()
+            grade.save(update_fields=["status", "published_at", "updated_at"])
+        if not item.is_published:
+            item.is_published = True
+            item.save(update_fields=["is_published", "updated_at"])
 
 
 # Local import for the aggregate helper

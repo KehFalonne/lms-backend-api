@@ -9,6 +9,7 @@ from apps.accounts.permissions import IsAuthenticatedAndActive
 from apps.common.responses import success_response
 from apps.academics.models import AcademicYear, AcademicYearStatus
 from apps.academics.serializers import AcademicYearSerializer
+from apps.audit.services.audit_service import AuditService
 
 
 class AcademicYearViewSet(viewsets.ModelViewSet):
@@ -69,7 +70,8 @@ class AcademicYearViewSet(viewsets.ModelViewSet):
         )
 
     def destroy(self, request, *args, **kwargs):
-        self.get_object().delete()
+        instance = self.get_object()
+        instance.delete()
         return success_response(message="Academic year deleted successfully.")
 
     @action(detail=True, methods=["post"], url_path="set-current")
@@ -77,13 +79,25 @@ class AcademicYearViewSet(viewsets.ModelViewSet):
     def set_current(self, request, pk=None):
         """POST /academic-years/{id}/set-current/"""
         year = self.get_object()
+        previous_current = list(
+            AcademicYear.objects.filter(is_current=True).values_list("name", flat=True)
+        )
         AcademicYear.objects.filter(is_current=True).update(
             is_current=False,
             status=AcademicYearStatus.COMPLETED,
         )
         year.is_current = True
         year.status = AcademicYearStatus.ACTIVE
+        year._skip_audit_log = True
         year.save(update_fields=["is_current", "status", "updated_at"])
+        AuditService.record(
+            action="ACADEMIC_YEAR_SET_CURRENT",
+            actor=request.user,
+            entity_type="AcademicYear",
+            entity_id=year.id,
+            request=request,
+            metadata={"previous_current": previous_current},
+        )
         fresh = self.get_queryset().get(pk=year.pk)
         return success_response(
             data=self.get_serializer(fresh).data,

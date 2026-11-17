@@ -2,6 +2,7 @@ from django.contrib import admin
 
 from .models import (
     Assignment,
+    AssignmentFile,
     AssignmentSubmission,
     Feedback,
     SubmissionFile,
@@ -38,6 +39,13 @@ class AssignmentSubmissionAdmin(admin.ModelAdmin):
 class SubmissionFileAdmin(admin.ModelAdmin):
     list_display = ("submission", "file", "created_at")
     autocomplete_fields = ("submission", "file")
+    readonly_fields = ("id", "created_at")
+
+
+@admin.register(AssignmentFile)
+class AssignmentFileAdmin(admin.ModelAdmin):
+    list_display = ("assignment", "file", "created_at")
+    autocomplete_fields = ("assignment", "file")
     readonly_fields = ("id", "created_at")
 
 

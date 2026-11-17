@@ -18,6 +18,7 @@ from rest_framework_simplejwt.tokens import RefreshToken
 
 from apps.accounts.models import UserSession, UserStatus
 from apps.accounts.selectors import get_user_by_identifier
+from apps.audit.services.audit_service import AuditService
 
 User = get_user_model()
 
@@ -61,17 +62,37 @@ class AuthService:
 
         refresh = RefreshToken.for_user(user)
 
+        # Students may only have one active device session. Revoke their
+        # previous refresh tokens and invalidate its access tokens as well.
+        if hasattr(user, "student_profile"):
+            now = datetime.now(dt_timezone.utc)
+            UserSession.objects.filter(
+                user=user, revoked_at__isnull=True
+            ).update(revoked_at=now)
+
         # Track session (hash-only, per database doc §23)
         expires_at = datetime.fromtimestamp(refresh["exp"], tz=dt_timezone.utc)
-        UserSession.objects.create(
+        session = UserSession.objects.create(
             user=user,
             refresh_token_hash=AuthService._hash_token(str(refresh)),
             ip_address=ip_address,
             user_agent=user_agent[:500] if user_agent else "",
             expires_at=expires_at,
         )
+        refresh["session_id"] = str(session.id)
 
-        user.touch_last_login()
+        user._skip_audit_log = True
+        try:
+            user.touch_last_login()
+        finally:
+            del user._skip_audit_log
+        AuditService.record(
+            action="AUTH_LOGIN",
+            actor=user,
+            entity_type="User",
+            entity_id=user.id,
+            metadata={"ip_address": ip_address, "user_agent": user_agent[:500]},
+        )
 
         return {
             "access": str(refresh.access_token),
@@ -81,7 +102,7 @@ class AuthService:
 
     @staticmethod
     @transaction.atomic
-    def logout(*, refresh_token: str) -> None:
+    def logout(*, refresh_token: str, request=None) -> None:
         """
         Revoke a refresh token. Idempotent — never leaks whether the token
         was valid.
@@ -93,6 +114,16 @@ class AuthService:
             return  # already invalid/blacklisted — no-op
 
         token_hash = AuthService._hash_token(refresh_token)
-        UserSession.objects.filter(
+        session = UserSession.objects.select_related("user").filter(
             refresh_token_hash=token_hash, revoked_at__isnull=True
-        ).update(revoked_at=datetime.now(dt_timezone.utc))
+        ).first()
+        if session:
+            session.revoked_at = datetime.now(dt_timezone.utc)
+            session.save(update_fields=["revoked_at"])
+            AuditService.record(
+                action="AUTH_LOGOUT",
+                actor=session.user,
+                entity_type="User",
+                entity_id=session.user_id,
+                request=request,
+            )

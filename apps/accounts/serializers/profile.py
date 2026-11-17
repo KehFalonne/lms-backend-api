@@ -5,6 +5,7 @@ from apps.accounts.models import StaffProfile, StudentProfile
 
 class StudentProfileSerializer(serializers.ModelSerializer):
     programme_id = serializers.SerializerMethodField()
+    faculty_id = serializers.SerializerMethodField()
 
     class Meta:
         model = StudentProfile
@@ -13,6 +14,7 @@ class StudentProfileSerializer(serializers.ModelSerializer):
             "matricule_number",
             "programme",
             "programme_id",
+            "faculty_id",
             "current_level",
             "admission_year",
             "admission_date",
@@ -32,9 +34,14 @@ class StudentProfileSerializer(serializers.ModelSerializer):
     def get_programme_id(self, obj) -> str | None:
         return str(obj.programme_id) if obj.programme_id else None
 
+    def get_faculty_id(self, obj) -> str | None:
+        faculty_id = getattr(getattr(obj.programme, "department", None), "faculty_id", None)
+        return str(faculty_id) if faculty_id else None
+
 
 class StaffProfileSerializer(serializers.ModelSerializer):
     department_id = serializers.SerializerMethodField()
+    faculty_id = serializers.SerializerMethodField()
 
     class Meta:
         model = StaffProfile
@@ -43,6 +50,7 @@ class StaffProfileSerializer(serializers.ModelSerializer):
             "staff_number",
             "department",
             "department_id",
+            "faculty_id",
             "job_title",
             "created_at",
             "updated_at",
@@ -58,3 +66,7 @@ class StaffProfileSerializer(serializers.ModelSerializer):
 
     def get_department_id(self, obj) -> str | None:
         return str(obj.department_id) if obj.department_id else None
+
+    def get_faculty_id(self, obj) -> str | None:
+        faculty_id = getattr(obj.department, "faculty_id", None)
+        return str(faculty_id) if faculty_id else None
